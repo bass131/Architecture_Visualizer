@@ -1,3 +1,5 @@
+model_reasoning_effort = "medium"
+
 [agents]
 max_threads = 4
 max_depth = 1

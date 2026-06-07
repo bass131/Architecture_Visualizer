@@ -1,0 +1,4 @@
+interface:
+  display_name: "Develop Architecture Atlas"
+  short_description: "Implement scoped atlas changes with verification"
+  default_prompt: "Use $develop-atlas to implement and verify a scoped architecture atlas change."

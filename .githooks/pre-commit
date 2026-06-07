@@ -1,0 +1,18 @@
+#!/usr/bin/env sh
+set -eu
+
+root="$(git rev-parse --show-toplevel)"
+staged="$(git diff --cached --name-only)"
+
+case "$staged" in
+  *tools/analyze.py*|*tools/verify_data.py*|*config/analysis-config.json*)
+    powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$root/verify.ps1" -Refresh
+    if ! git diff --quiet -- data/architecture-data.js; then
+      echo "Generated data changed during verification. Stage data/architecture-data.js and commit again." >&2
+      exit 1
+    fi
+    ;;
+  *)
+    powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$root/verify.ps1"
+    ;;
+esac

@@ -10,6 +10,12 @@ cd C:\Dev\DawnHolder_Architecture
 start .\_index.html
 ```
 
+클론 후 저장소 검증 hook을 활성화합니다.
+
+```powershell
+git config core.hooksPath .githooks
+```
+
 WSL에서 직접 갱신할 수도 있습니다.
 
 ```bash
@@ -36,11 +42,22 @@ cd /mnt/c/Dev/DawnHolder_Architecture
 Codex CLI를 이 디렉터리에서 시작하면 다음 프로젝트 구성을 읽습니다.
 
 - `AGENTS.md`: 불변 규칙, 작업 라우팅, 검증 기준
-- `.agents/skills/`: `$refresh-architecture`, `$review-architecture`
+- `.agents/skills/`: 개발, 리뷰, 재생성, 진단 검토를 위한 프로젝트 workflow
 - `.codex/agents/`: 읽기 전용 `reviewer`, `verifier` subagent
 - `.codex/config.toml`: 모델, 경로, 컨텍스트, 5시간 및 주간 잔량 footer
 
 Codex는 내장 footer 항목과 프로젝트 전용 읽기 모드 subagent를 사용합니다. 새 CLI 세션에서 적용되며 `/statusline`으로 대화형 변경도 가능합니다.
+
+### 슬래시 명령과 프로젝트 스킬
+
+Codex 입력창에서 `/`를 누르면 내장 슬래시 명령을 검색할 수 있습니다. 프로젝트 workflow는 `/skills`를 실행해 선택하거나 `$skill-name`으로 직접 호출합니다.
+
+- `/skills` → `develop-atlas`: 일반 구현 작업
+- `/skills` → `review-atlas`: 현재 저장소 변경 리뷰
+- `/skills` → `refresh-architecture`: 분석 데이터 재생성
+- `/skills` → `review-architecture`: 진단을 실제 소스와 대조
+
+직접 호출 예시는 `$develop-atlas 이 검색 필터를 개선해줘`와 같습니다. `/plan`, `/diff`, `/review`, `/status`, `/compact`, `/permissions`, `/agent`, `/hooks` 같은 내장 명령은 세션 제어에 사용합니다.
 
 ## 해석 주의
 
@@ -59,7 +76,8 @@ tools/analyze.py            WSL 정적 분석기
 config/analysis-config.json 범위와 임계값
 refresh.ps1 / refresh.sh    생성 루프
 AGENTS.md / HARNESS.md      Codex Agent Harness 규칙
-.agents/skills/             갱신 및 읽기 전용 리뷰 workflow
+.agents/skills/             개발, 리뷰, 갱신 workflow
 .codex/                     프로젝트 footer와 custom subagent
-docs/                       PRD, Architecture, ADR
+docs/                       제품, 구조, 결정, UI, 경계, Codex workflow
+.githooks/                  커밋 전 결정적 검증
 ```

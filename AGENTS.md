@@ -24,7 +24,9 @@ Load only the context needed for the task:
 - Product behavior: `docs/PRD.md`
 - Component boundaries and data flow: `docs/ARCHITECTURE.md`
 - Design decisions and tradeoffs: `docs/ADR.md`
+- Visual language and interaction rules: `docs/UI_GUIDE.md`
 - Source-repository isolation: `docs/SOURCE_BOUNDARY.md`
+- Codex workflow mapping: `docs/CODEX_WORKFLOW.md`
 - Executable analysis policy: `config/analysis-config.json`
 - Harness roles and gates: `HARNESS.md`
 
@@ -38,6 +40,13 @@ When interpreting the source project, consult its architecture records and relev
 - Documentation or harness behavior: edit `AGENTS.md`, `HARNESS.md`, `README.md`, `docs/`, `.agents/skills/`, or `.codex/`.
 
 Keep each change within one responsibility unless the contract genuinely crosses boundaries.
+
+## Development Rules
+
+- Add or update a deterministic test or reproducible fixture before or alongside behavioral analyzer and UI changes. Documentation-only changes are exempt.
+- Keep acceptance criteria executable. Prefer repository commands over prose-only claims.
+- Use conventional commit messages when the user requests a commit.
+- Do not create branches, commits, pushes, or unattended agent runs unless the user explicitly requests them.
 
 ## Harness Loop
 
@@ -61,7 +70,25 @@ Retry a failing implementation at most five times. Stop and report the concrete 
 
 Spawn subagents only when the user asks for parallel agents or the task is substantial enough to justify an explicit delegated review. Avoid parallel write-heavy agents.
 
+## Reasoning Effort
+
+- Main session and implementation: `medium`. Use this default for routing, coding, debugging, and ordinary design decisions.
+- Deterministic verification: `medium` when delegated to `verifier`, because it must interpret failures and assess whether the selected gate matches the change.
+- Architecture and regression review: `high` through `reviewer`, because source-backed evidence, false positives, and missing-test risk require deeper judgment.
+- Simple reads, status checks, refresh commands, and exact-format validation: run directly in the main session without spawning another agent or increasing effort.
+
+Do not raise effort merely because a task is long. Escalate to `reviewer` only when the work requires independent judgment about correctness, architecture, evidence, or regression risk.
+
+## Context Economy
+
+- Load only task-relevant documents and source files; do not reread the whole harness by default.
+- Prefer one targeted verification during iteration and one final required gate. Avoid repeated full refreshes unless source or generated-data semantics changed.
+- Use deterministic scripts for facts they can establish; reserve model reasoning for interpretation and decisions.
+- Do not spawn a subagent for work the main session can verify directly.
+
 ## Reusable Skills
 
 - `$refresh-architecture`: regenerate the atlas and verify the complete data pipeline.
 - `$review-architecture`: review high-priority diagnostics against the source without refactoring it.
+- `$develop-atlas`: implement a scoped repository change through the Codex harness loop.
+- `$review-atlas`: review repository changes against architecture, UI, tests, and verification evidence.

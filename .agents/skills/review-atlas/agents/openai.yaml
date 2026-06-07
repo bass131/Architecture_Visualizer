@@ -1,0 +1,4 @@
+interface:
+  display_name: "Review Architecture Atlas"
+  short_description: "Review repository changes against project rules"
+  default_prompt: "Use $review-atlas to review current atlas changes and verification evidence."
