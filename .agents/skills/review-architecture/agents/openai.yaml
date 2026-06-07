@@ -1,0 +1,4 @@
+interface:
+  display_name: "Review Architecture"
+  short_description: "Review architecture diagnostics against source"
+  default_prompt: "Use $review-architecture to review the highest-priority architecture diagnostics against the source."

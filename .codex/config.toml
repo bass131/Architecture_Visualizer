@@ -1,0 +1,13 @@
+[agents]
+max_threads = 4
+max_depth = 1
+
+[tui]
+# Keep project context and quota visibility in the built-in Codex footer.
+status_line = [
+  "model-with-reasoning",
+  "current-dir",
+  "context-remaining",
+  "five-hour-limit",
+  "weekly-limit",
+]

@@ -1,0 +1,34 @@
+{
+  "sourceRoots": [
+    "02_Server",
+    "03_Client/Assets/Scripts",
+    "04_ClientNet",
+    "98_Shared",
+    "99_Tools"
+  ],
+  "excludeSegments": [
+    "/bin/",
+    "/obj/",
+    "/Library/",
+    "/PackageCache/",
+    "/Temp/"
+  ],
+  "testMarkers": [
+    ".Tests/",
+    "/Tests/",
+    "Tests.cs"
+  ],
+  "generatedMarkers": [
+    "/Generated/",
+    ".g.cs",
+    ".generated.cs"
+  ],
+  "solidThresholds": {
+    "classReviewLines": 300,
+    "godClassLines": 600,
+    "interfaceMembers": 10,
+    "fanOut": 12,
+    "fanIn": 20,
+    "concreteDependencies": 8
+  }
+}

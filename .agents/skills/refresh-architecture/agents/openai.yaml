@@ -1,0 +1,4 @@
+interface:
+  display_name: "Refresh Architecture"
+  short_description: "Regenerate and verify the architecture atlas"
+  default_prompt: "Use $refresh-architecture to regenerate and verify the DawnHolder architecture atlas."
