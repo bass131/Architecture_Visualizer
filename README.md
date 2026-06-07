@@ -2,6 +2,10 @@
 
 `C:\Dev\ClaudeDev`의 C# 구조를 읽기 전용으로 분석하고 `_index.html`에서 탐색하는 독립 프로젝트입니다. 소스 프로젝트와 Git 기록, 생성물, 에이전트 설정을 공유하지 않습니다.
 
+[아키텍처 Atlas 바로 열기](https://bass131.github.io/Architecture_Visualizer/_index.html)
+
+> GitHub Pages 배포가 완료되면 위 링크에서 최신 `main` 브랜치의 Atlas를 바로 탐색할 수 있습니다.
+
 ## 사용법
 
 ```powershell
