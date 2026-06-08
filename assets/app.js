@@ -13,6 +13,7 @@
   const shell = document.querySelector(".app-shell");
   const sidebar = document.querySelector("#project-explorer");
   const context = document.querySelector("#context-panel");
+  let sourceUmlRenderSeq = 0;
 
   if (!data || data.schemaVersion !== "1.0") {
     main.innerHTML = `<div class="empty-state"><h2>분석 데이터를 불러오지 못했습니다.</h2><p><code>refresh.ps1</code>을 실행해 데이터를 생성하세요.</p></div>`;
@@ -27,7 +28,7 @@
   const incomingByType = groupBy(data.relations, item => item.targetId);
   const flowScenarios = createFlowScenarios();
   const classAreas = createClassAreas();
-  const viewNames = new Set(["overview", "flow", "architecture", "classes", "explorer", "diagnostics", "calls"]);
+  const viewNames = new Set(["overview", "flow", "architecture", "classes", "source-uml", "explorer", "diagnostics", "calls"]);
   const state = {
     view: initialView(),
     selectedTypeId: pickInitialType(),
@@ -35,7 +36,9 @@
     search: "",
     diagnosticSeverity: "all",
     diagnosticPrinciple: "all",
+    diagnosticTypeId: null,
     diagnosticCopyStatus: null,
+    sourceUmlCopyStatus: null,
     architectureCopyStatus: null,
     sidebarCollapsed: readPanelPreference("atlas.sidebarCollapsed"),
     contextCollapsed: readPanelPreference("atlas.contextCollapsed"),
@@ -43,7 +46,8 @@
     flowScenario: "movement",
     flowSelectedNode: "input",
     flowPlaying: true,
-    flowZoom: 1.25,
+    flowZoom: 1,
+    architecturePlaying: true,
     architectureZoom: .75,
     classArea: "client",
     classSelectedTypeId: null,
@@ -102,7 +106,10 @@
     showGenerated.addEventListener("change", renderTree);
 
     document.querySelectorAll(".tab").forEach(button => {
-      button.addEventListener("click", () => setView(button.dataset.view));
+      button.addEventListener("click", () => {
+        if (button.dataset.view === "diagnostics") state.diagnosticTypeId = null;
+        setView(button.dataset.view);
+      });
     });
 
     document.querySelector("#help-button").addEventListener("click", () =>
@@ -163,6 +170,15 @@
       render();
       return;
     }
+    const diagnosticTypeTarget = event.target.closest("[data-diagnostic-type]");
+    if (diagnosticTypeTarget) {
+      state.diagnosticTypeId = diagnosticTypeTarget.dataset.diagnosticType || null;
+      state.diagnosticSeverity = "all";
+      state.diagnosticPrinciple = "all";
+      state.diagnosticCopyStatus = null;
+      setView("diagnostics");
+      return;
+    }
     const copyDiagnosticsTarget = event.target.closest("[data-copy-diagnostics]");
     if (copyDiagnosticsTarget) {
       copyDiagnostics();
@@ -172,6 +188,12 @@
     const copyArchitectureTarget = event.target.closest("[data-copy-architecture]");
     if (copyArchitectureTarget) {
       copyArchitectureSource();
+      render();
+      return;
+    }
+    const copySourceUmlTarget = event.target.closest("[data-copy-source-uml]");
+    if (copySourceUmlTarget) {
+      copySourceUml(copySourceUmlTarget.dataset.copySourceUml);
       render();
       return;
     }
@@ -196,13 +218,19 @@
     }
     const flowZoomTarget = event.target.closest("[data-flow-zoom]");
     if (flowZoomTarget) {
-      state.flowZoom = nextZoom(state.flowZoom, Number(flowZoomTarget.dataset.flowZoom), 1.25);
+      state.flowZoom = nextZoom(state.flowZoom, Number(flowZoomTarget.dataset.flowZoom), 1);
       render();
       return;
     }
     const architectureZoomTarget = event.target.closest("[data-architecture-zoom]");
     if (architectureZoomTarget) {
       state.architectureZoom = nextZoom(state.architectureZoom, Number(architectureZoomTarget.dataset.architectureZoom), .75);
+      render();
+      return;
+    }
+    const architecturePlayTarget = event.target.closest("[data-architecture-play]");
+    if (architecturePlayTarget) {
+      state.architecturePlaying = !state.architecturePlaying;
       render();
       return;
     }
@@ -338,6 +366,7 @@
     else if (state.view === "flow") renderFlow();
     else if (state.view === "architecture") renderArchitectureMap();
     else if (state.view === "classes") renderClasses();
+    else if (state.view === "source-uml") renderSourceUml();
     else if (state.view === "diagnostics") renderDiagnostics();
     else if (state.view === "calls") renderCalls();
     else renderExplorer();
@@ -357,14 +386,24 @@
           ${[...folders.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([folder, folderTypes]) => `
             <details ${folderTypes.some(type => type.id === state.selectedTypeId) || state.search ? "open" : ""}>
               <summary>${escapeHtml(folder)} <span class="tree-count">${folderTypes.length}</span></summary>
-              ${folderTypes.sort((a, b) => a.name.localeCompare(b.name)).map(type => `
-                <button class="tree-type ${type.id === state.selectedTypeId ? "is-selected" : ""}" data-type-id="${attr(type.id)}">
-                  <span class="kind-dot ${attr(type.kind)}"></span><span>${highlight(type.name, state.search)}</span>
-                </button>`).join("")}
+              ${renderTreeKindGroups(folderTypes)}
             </details>`).join("")}
         </div>
       </details>`;
     }).join("") || `<div class="empty-state">검색 결과가 없습니다.</div>`;
+  }
+
+  function renderTreeKindGroups(types) {
+    const groups = groupBy(types, type => type.kind);
+    return [...groups.entries()]
+      .sort(([a], [b]) => typeKindOrder(a) - typeKindOrder(b) || a.localeCompare(b))
+      .map(([kind, kindTypes]) => `<div class="tree-kind-group">
+        <div class="tree-kind-heading"><span>${escapeHtml(kind)}</span><span class="tree-count">${kindTypes.length}</span></div>
+        ${kindTypes.sort((a, b) => a.name.localeCompare(b.name)).map(type => `
+          <button class="tree-type ${type.id === state.selectedTypeId ? "is-selected" : ""}" data-type-id="${attr(type.id)}">
+            <span class="kind-dot ${attr(type.kind)}"></span><span>${highlight(type.name, state.search)}</span>
+          </button>`).join("")}
+      </div>`).join("");
   }
 
   function isTypeVisible(type) {
@@ -426,12 +465,14 @@
     const model = createSystemArchitectureDiagram();
     const source = formatArchitectureSource();
     const copyLabel = state.architectureCopyStatus === "copied" ? "복사됨" : state.architectureCopyStatus === "failed" ? "복사 실패" : "구조도 원문 복사";
+    const reducedMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+    const animate = state.architecturePlaying && !reducedMotion;
     main.innerHTML = `
       <header class="page-header">
         <div>
           <span class="eyebrow">HIGH-LEVEL ARCHITECTURE</span>
           <h1>전체 구조도</h1>
-          <p class="subtitle">연결을 생성, 요청, 권위 처리, 결과 반환, 공유 계약의 다섯 의미 채널로 분리했습니다. 선 위 번호를 따라가면 각 연결의 목적을 확인할 수 있습니다.</p>
+          <p class="subtitle">연결을 생성, 요청, 권위 처리, 결과 반환, 공유 계약의 다섯 의미 채널로 분리했습니다. 움직이는 배선 점은 방향을, 선 위 번호는 연결 목적을 보여줍니다.</p>
         </div>
         <div class="source-ref">Client · ClientNet · Shared · Server · Tool</div>
       </header>
@@ -439,11 +480,12 @@
         <div class="diagram-heading">
           <div><span class="eyebrow">SYSTEM BOUNDARIES</span><h2>Runtime + Generation Structure</h2></div>
           <div class="diagram-heading-actions">
-            <p>번호는 연결 의도를, 색과 선 모양은 관계 종류를 보조적으로 나타냅니다.</p>
+            <p>번호는 연결 의도를, 색과 움직이는 점은 관계 종류와 진행 방향을 나타냅니다.</p>
+            <button class="ghost-button motion-toggle" data-architecture-play aria-pressed="${state.architecturePlaying}">${reducedMotion ? "모션 감소 설정 적용" : animate ? "배선 흐름 정지" : "배선 흐름 재생"}</button>
             ${zoomControls("architecture", state.architectureZoom, "전체 구조도")}
           </div>
         </div>
-        <div class="architecture-map-scroll">${renderSystemArchitectureSvg(model, state.architectureZoom)}</div>
+        <div class="architecture-map-scroll">${renderSystemArchitectureSvg(model, state.architectureZoom, animate)}</div>
         <div class="architecture-intent-strip" aria-label="구조도 연결 의도">
           ${model.channels.map(channel => `<div class="architecture-intent-item ${attr(channel.tone)}"><span>${channel.number}</span><div><b>${escapeHtml(channel.title)}</b><small>${escapeHtml(channel.detail)}</small></div></div>`).join("")}
         </div>
@@ -470,7 +512,7 @@
           ${Object.values(flowScenarios).map(item => `<button class="chip ${item.id === scenario.id ? "is-active" : ""}" data-flow-scenario="${attr(item.id)}">${escapeHtml(item.title)}</button>`).join("")}
         </div>
         <div class="diagram-actions">
-          ${zoomControls("flow", state.flowZoom, "전체 흐름도", 1.25)}
+          ${zoomControls("flow", state.flowZoom, "전체 흐름도")}
           <button class="ghost-button motion-toggle" data-flow-play aria-pressed="${state.flowPlaying}">${reducedMotion ? "모션 감소 설정 적용" : animate ? "애니메이션 정지" : "애니메이션 재생"}</button>
         </div>
       </div>
@@ -501,17 +543,17 @@
       </div>`;
   }
 
-  function renderArchitectureDiagram(scenario, selectedNodeId, animate, zoom = 1.25) {
+  function renderArchitectureDiagram(scenario, selectedNodeId, animate, zoom = 1) {
     const usedLaneIds = new Set(scenario.nodes.map(node => node.laneId));
     const usedLanes = scenario.lanes.filter(lane => usedLaneIds.has(lane.id))
-      .map((lane, index) => ({ ...lane, y: 52 + index * 124, height: 112 }));
+      .map((lane, index) => ({ ...lane, y: 56 + index * 142, height: 126 }));
     const laneY = new Map(usedLanes.map(lane => [lane.id, lane.y]));
     const nodeWidth = 148;
     const nodeHeight = 64;
-    const layoutNodes = scenario.nodes.map((node, index) => ({ ...node, x: 170 + index * 162, y: laneY.get(node.laneId) + 36 }));
+    const layoutNodes = scenario.nodes.map((node, index) => ({ ...node, x: 190 + index * 220, y: laneY.get(node.laneId) + 42 }));
     const nodeById = new Map(layoutNodes.map(node => [node.id, node]));
     const diagramHeight = Math.max(...usedLanes.map(lane => lane.y + lane.height)) + 18;
-    const diagramWidth = Math.max(1160, layoutNodes.at(-1).x + nodeWidth + 26);
+    const diagramWidth = Math.max(1260, layoutNodes.at(-1).x + nodeWidth + 38);
     const paths = scenario.edges.map((edge, index) => {
       const source = nodeById.get(edge.from);
       const target = nodeById.get(edge.to);
@@ -522,10 +564,10 @@
         <path d="${route.path}" marker-end="url(#arrow-${attr(edge.tone || "data")})"></path>
         <rect class="connector-label-bg" x="${route.labelX - labelWidth / 2}" y="${route.labelY - 10}" width="${labelWidth}" height="16" rx="4"></rect>
         <text x="${route.labelX}" y="${route.labelY + 1}">${escapeHtml(edgeLabel)}</text>
-        ${animate ? `<circle r="4"><animateMotion dur="${Math.max(2.4, scenario.edges.length * .38)}s" begin="${(index * .42).toFixed(2)}s" repeatCount="indefinite" path="${route.path}"></animateMotion></circle>` : ""}
+        ${animate ? `<circle r="4"><animateMotion dur="${flowAnimationDuration(route.path)}s" begin="${(index * .42).toFixed(2)}s" repeatCount="indefinite" path="${route.path}"></animateMotion></circle>` : ""}
       </g>`;
     }).join("");
-    return `<svg class="architecture-diagram" style="${diagramZoomStyle(zoom, 1.25)}" viewBox="0 0 ${diagramWidth} ${diagramHeight}" role="group" aria-label="${attr(scenario.title)}">
+    return `<svg class="architecture-diagram" style="${diagramZoomStyle(zoom)}" viewBox="0 0 ${diagramWidth} ${diagramHeight}" role="group" aria-label="${attr(scenario.title)}">
       <defs>
         <pattern id="diagram-grid" width="20" height="20" patternUnits="userSpaceOnUse"><path d="M 20 0 L 0 0 0 20" class="diagram-grid-line"></path></pattern>
         ${["intent", "data", "authority", "result"].map(tone => `<marker id="arrow-${tone}" markerWidth="9" markerHeight="7" refX="8" refY="3.5" orient="auto"><polygon points="0 0, 9 3.5, 0 7"></polygon></marker>`).join("")}
@@ -614,17 +656,17 @@
       channel(3, "권위 처리", "검증된 요청을 actor 소유 영역과 game system에서 확정", "authority", 997, 596,
         ["M 997 616 V 576", "M 910 549 H 852"],
         [{ x: 1062, y: 598, text: "작업 큐 등록" }, { x: 881, y: 536, text: "시스템 처리" }]),
-      channel(4, "결과 반환", "서버 확정 결과를 네트워크 경로로 Client에 반영", "result", 700, 730,
-        ["M 1084 549 H 1128 V 730 H 427 V 670", "M 340 643 H 151 V 576"],
-        [{ x: 820, y: 717, text: "확정 상태 반환" }, { x: 245, y: 630, text: "화면 상태 반영" }]),
+      channel(4, "결과 반환", "서버 확정 결과를 네트워크 경로로 Client에 반영", "result", 700, 742,
+        ["M 1084 549 H 1138 V 742 H 427 V 670", "M 340 643 H 142 V 576"],
+        [{ x: 820, y: 729, text: "확정 상태 반환" }, { x: 236, y: 630, text: "화면 상태 반영" }]),
       channel(5, "공유 계약", "Client와 Server가 같은 규칙과 패킷 형태를 참조", "contract", 680, 349,
         ["M 286 349 H 914", "M 189 376 V 418 H 163 V 450", "M 1011 376 V 418 H 997 V 450"],
         [{ x: 600, y: 336, text: "공통 참조 버스" }, { x: 221, y: 410, text: "Client 참조" }, { x: 969, y: 410, text: "Server 참조" }]),
     ];
-    return { zones, items, channels, width: 1200, height: 762 };
+    return { zones, items, channels, width: 1200, height: 780 };
   }
 
-  function renderSystemArchitectureSvg(model, zoom = 1) {
+  function renderSystemArchitectureSvg(model, zoom = 1, animate = false) {
     return `<svg class="architecture-map" style="${diagramZoomStyle(zoom)}" viewBox="0 0 ${model.width} ${model.height}" role="img" aria-label="DawnHolder high level architecture">
       <defs>
         ${["generation", "intent", "authority", "result"].map(tone => `<marker id="arch-arrow-${tone}" markerWidth="9" markerHeight="7" refX="8" refY="3.5" orient="auto"><polygon points="0 0, 9 3.5, 0 7"></polygon></marker>`).join("")}
@@ -641,7 +683,8 @@
         <text class="zone-subtitle" x="${zone.x + 18}" y="${zone.y + 49}">${escapeHtml(zone.subtitle)}</text>
       </g>`).join("")}
       ${model.channels.map(channel => `<g class="architecture-channel ${attr(channel.tone)}">
-        ${channel.paths.map((path, index) => `<path d="${path}" ${channel.tone === "contract" ? "" : `marker-end="url(#arch-arrow-${attr(channel.tone)})"`}></path>`).join("")}
+        ${channel.paths.map(path => `<path class="channel-route" d="${path}" ${channel.tone === "contract" ? "" : `marker-end="url(#arch-arrow-${attr(channel.tone)})"`}></path>`).join("")}
+        ${animate ? channel.paths.map((path, index) => `<circle class="channel-flow-dot" r="${channel.tone === "contract" ? "3.2" : "4.4"}"><animateMotion dur="${flowAnimationDuration(path)}s" begin="${(index * .34 + channel.number * .16).toFixed(2)}s" repeatCount="indefinite" path="${path}"></animateMotion></circle>`).join("") : ""}
         ${channel.labels.map(label => `<g class="channel-label" transform="translate(${label.x} ${label.y})"><rect x="${-Math.max(26, label.text.length * 5.5)}" y="-11" width="${Math.max(52, label.text.length * 11)}" height="18" rx="4"></rect><text y="2">${escapeHtml(label.text)}</text></g>`).join("")}
         <g class="channel-badge" transform="translate(${channel.badgeX} ${channel.badgeY})"><circle r="11"></circle><text y="4">${channel.number}</text></g>
       </g>`).join("")}
@@ -651,6 +694,22 @@
         <text class="component-subtitle" x="14" y="40">${escapeHtml(item.subtitle)}</text>
       </g>`).join("")}
     </svg>`;
+  }
+
+  function flowAnimationDuration(path) {
+    const points = [...path.matchAll(/[MLHV]\s*(-?\d+(?:\.\d+)?)(?:\s+(-?\d+(?:\.\d+)?))?/g)];
+    let x = 0, y = 0, length = 0;
+    points.forEach(match => {
+      const command = match[0][0];
+      const first = Number(match[1]);
+      const second = match[2] === undefined ? null : Number(match[2]);
+      const nextX = command === "V" ? x : first;
+      const nextY = command === "H" ? y : second ?? y;
+      if (command !== "M") length += Math.abs(nextX - x) + Math.abs(nextY - y);
+      x = nextX;
+      y = nextY;
+    });
+    return Math.min(8, Math.max(1.8, length / 105)).toFixed(2);
   }
 
   function formatArchitectureSource() {
@@ -714,13 +773,14 @@
     const visibleIds = new Set(visibleTypes.map(type => type.id));
     const visibleRelations = relations.filter(relation => visibleIds.has(relation.sourceId) && visibleIds.has(relation.targetId))
       .sort((a, b) => classRelationPriority(b, selected?.id) - classRelationPriority(a, selected?.id))
-      .slice(0, 42);
+      .slice(0, 42)
+      .sort((a, b) => classRelationPriority(a, selected?.id) - classRelationPriority(b, selected?.id));
     const kinds = relationKinds(allRelations);
     const selectedRelations = relations.filter(relation => relation.sourceId === selected?.id || relation.targetId === selected?.id);
 
     main.innerHTML = `
       <header class="page-header">
-        <div><span class="eyebrow">CLASS DIAGRAM</span><h1>영역별 클래스 맵</h1><p class="subtitle">영역의 핵심 타입을 결합도 순으로 추리고, 선택 타입의 직접 관계를 우선 배치합니다. 선은 관계 종류를 나타내며 노드 뒤로 지나갑니다.</p></div>
+        <div><span class="eyebrow">CLASS DIAGRAM</span><h1>영역별 클래스 맵</h1><p class="subtitle">네임스페이스를 UML 패키지처럼 묶고 패키지 사이 의존성만 점선으로 표시합니다. 선택 타입이 포함된 패키지와 직접 관계가 있는 패키지를 우선 강조합니다.</p></div>
         <div class="source-ref">${areaTypes.length} types · ${allRelations.length} internal relations</div>
       </header>
       <div class="class-toolbar">
@@ -753,22 +813,18 @@
   }
 
   function renderClassDiagram(types, relations, selectedTypeId, zoom) {
-    const columns = 4;
-    const nodeWidth = 210, nodeHeight = 104, gapX = 62, gapY = 54, marginX = 44, marginY = 44;
-    const nodes = types.map((type, index) => ({
-      type,
-      x: marginX + (index % columns) * (nodeWidth + gapX),
-      y: marginY + Math.floor(index / columns) * (nodeHeight + gapY),
-    }));
-    const nodeById = new Map(nodes.map(node => [node.type.id, node]));
-    const width = marginX * 2 + columns * nodeWidth + (columns - 1) * gapX;
-    const rows = Math.max(1, Math.ceil(nodes.length / columns));
-    const height = marginY * 2 + rows * nodeHeight + (rows - 1) * gapY;
-    const edges = relations.map(relation => {
-      const source = nodeById.get(relation.sourceId);
-      const target = nodeById.get(relation.targetId);
+    const layout = buildClassPackageLayout(types, relations, selectedTypeId);
+    const { packages, packageRelations, width, height } = layout;
+    const edges = packageRelations.map((relation, index) => {
+      const source = packages.find(item => item.id === relation.sourcePackageId);
+      const target = packages.find(item => item.id === relation.targetPackageId);
       if (!source || !target) return "";
-      return `<path class="class-edge ${attr(relation.kind)} ${relation.sourceId === selectedTypeId || relation.targetId === selectedTypeId ? "is-focused" : ""}" d="${classEdgePath(source, target, nodeWidth, nodeHeight)}" marker-end="url(#class-arrow-${attr(relation.kind)})"></path>`;
+      const path = classPackageEdgePath(source, target, index);
+      const focusClass = relation.isFocused ? "is-focused" : "";
+      return `<g class="class-package-edge ${attr(relation.primaryKind)} ${focusClass}">
+        <path d="${path}" marker-end="url(#class-arrow-${attr(relation.primaryKind)})"></path>
+        <text x="${relation.labelX}" y="${relation.labelY}">${relation.count}</text>
+      </g>`;
     }).join("");
     return `<svg class="class-diagram" style="width:${Math.round(width * zoom)}px" viewBox="0 0 ${width} ${height}" role="group" aria-label="영역별 클래스 다이어그램">
       <defs>
@@ -777,35 +833,171 @@
       </defs>
       <rect class="diagram-grid-bg" width="100%" height="100%"></rect>
       <g class="class-edges">${edges}</g>
-      ${nodes.map(node => classDiagramNode(node.type, node.x, node.y, nodeWidth, nodeHeight, node.type.id === selectedTypeId)).join("")}
+      ${packages.map(item => classPackageNode(item, selectedTypeId)).join("")}
     </svg>`;
   }
 
-  function classDiagramNode(type, x, y, width, height, selected) {
-    const members = type.members.slice(0, 2).map(member => `${member.kind} ${member.name}`);
-    return `<g class="class-node ${selected ? "is-selected" : ""} ${attr(type.kind)}" data-class-type-id="${attr(type.id)}" tabindex="0" role="button" aria-label="${attr(type.name)}" transform="translate(${x} ${y})">
-      <rect width="${width}" height="${height}"></rect><line x1="0" y1="34" x2="${width}" y2="34"></line><line x1="0" y1="76" x2="${width}" y2="76"></line>
-      <text class="class-stereotype" x="10" y="13">«${escapeHtml(type.kind)}»</text><text class="class-title" x="10" y="28">${escapeHtml(truncate(type.name, 28))}</text>
-      ${members.map((member, index) => `<text class="class-member" x="10" y="${51 + index * 15}">${escapeHtml(truncate(member, 31))}</text>`).join("")}
-      <text class="class-meta" x="10" y="94">${type.methodCount} methods · fan ${type.fanIn}/${type.fanOut}</text>
+  function buildClassPackageLayout(types, relations, selectedTypeId) {
+    const packages = buildClassPackages(types);
+    const packageByTypeId = new Map(packages.flatMap(item => item.types.map(type => [type.id, item.id])));
+    const packageRelations = aggregatePackageRelations(relations, packageByTypeId, selectedTypeId);
+    const selectedPackageId = packageByTypeId.get(selectedTypeId);
+    packages.forEach(item => {
+      item.isSelected = item.id === selectedPackageId;
+      item.isFocused = item.isSelected || packageRelations.some(relation => relation.isFocused && (relation.sourcePackageId === item.id || relation.targetPackageId === item.id));
+      item.internalRelationCount = relations.filter(relation => packageByTypeId.get(relation.sourceId) === item.id && packageByTypeId.get(relation.targetId) === item.id).length;
+    });
+    packages.sort((a, b) => Number(b.isSelected) - Number(a.isSelected)
+      || Number(b.isFocused) - Number(a.isFocused)
+      || b.score - a.score
+      || a.name.localeCompare(b.name));
+
+    const packageWidth = 286, gapX = 84, gapY = 82, marginX = 54, marginY = 48, columns = 3;
+    const rows = Math.max(1, Math.ceil(packages.length / columns));
+    const rowHeights = Array.from({ length: rows }, (_, row) =>
+      Math.max(...packages.slice(row * columns, row * columns + columns).map(item => item.height), 214));
+    const rowY = rowHeights.reduce((positions, height, row) => {
+      positions.push(row ? positions[row - 1] + rowHeights[row - 1] + gapY : marginY);
+      return positions;
+    }, []);
+    packages.forEach((item, index) => {
+      const row = Math.floor(index / columns);
+      const column = index % columns;
+      item.x = marginX + column * (packageWidth + gapX);
+      item.y = rowY[row];
+      item.width = packageWidth;
+      item.row = row;
+      item.column = column;
+    });
+    const width = marginX * 2 + columns * packageWidth + (columns - 1) * gapX;
+    const height = marginY + rowY.at(-1) + rowHeights.at(-1);
+    packageRelations.forEach((relation, index) => {
+      const source = packages.find(item => item.id === relation.sourcePackageId);
+      const target = packages.find(item => item.id === relation.targetPackageId);
+      if (!source || !target) return;
+      const sourceCenterY = source.y + source.height / 2;
+      const targetCenterY = target.y + target.height / 2;
+      relation.labelX = (source.x + target.x + packageWidth) / 2 + ((index % 3) - 1) * 16;
+      relation.labelY = source.row === target.row
+        ? (sourceCenterY + targetCenterY) / 2 - 8
+        : Math.min(source.y, target.y) + Math.abs(source.y - target.y) / 2 + 8;
+    });
+    return { packages, packageRelations, width, height };
+  }
+
+  function buildClassPackages(types) {
+    const groups = groupBy(types, classPackageKey);
+    return [...groups.entries()].map(([name, packageTypes]) => {
+      const sortedTypes = [...packageTypes].sort(compareClassTypes);
+      const typeGroups = [
+        { key: "interface", label: "interface", types: sortedTypes.filter(type => type.kind === "interface") },
+        { key: "class", label: "class / record", types: sortedTypes.filter(type => ["class", "record"].includes(type.kind)) },
+        { key: "value", label: "struct / enum", types: sortedTypes.filter(type => ["struct", "record-struct", "enum"].includes(type.kind)) },
+        { key: "other", label: "other", types: sortedTypes.filter(type => !["interface", "class", "record", "struct", "record-struct", "enum"].includes(type.kind)) },
+      ].filter(group => group.types.length);
+      const visibleRows = typeGroups.reduce((count, group) => count + 1 + Math.min(group.types.length, 4), 0);
+      return {
+        id: `pkg:${name}`,
+        name,
+        types: sortedTypes,
+        typeGroups,
+        score: sortedTypes.reduce((sum, type) => sum + classTypeScore(type), 0),
+        height: Math.max(214, 78 + visibleRows * 17),
+      };
+    });
+  }
+
+  function classPackageKey(type) {
+    return type.namespace || type.folder || type.layer || "Unknown";
+  }
+
+  function aggregatePackageRelations(relations, packageByTypeId, selectedTypeId) {
+    const selectedPackageId = packageByTypeId.get(selectedTypeId);
+    const grouped = new Map();
+    relations.forEach(relation => {
+      const sourcePackageId = packageByTypeId.get(relation.sourceId);
+      const targetPackageId = packageByTypeId.get(relation.targetId);
+      if (!sourcePackageId || !targetPackageId || sourcePackageId === targetPackageId) return;
+      const key = `${sourcePackageId}->${targetPackageId}`;
+      const item = grouped.get(key) || {
+        sourcePackageId,
+        targetPackageId,
+        count: 0,
+        kindCounts: new Map(),
+        isFocused: false,
+      };
+      item.count += 1;
+      item.kindCounts.set(relation.kind, (item.kindCounts.get(relation.kind) || 0) + 1);
+      item.isFocused ||= relation.sourceId === selectedTypeId || relation.targetId === selectedTypeId || sourcePackageId === selectedPackageId || targetPackageId === selectedPackageId;
+      grouped.set(key, item);
+    });
+    return [...grouped.values()]
+      .sort((a, b) => Number(b.isFocused) - Number(a.isFocused) || b.count - a.count || a.sourcePackageId.localeCompare(b.sourcePackageId) || a.targetPackageId.localeCompare(b.targetPackageId))
+      .slice(0, 32)
+      .map(item => ({
+        ...item,
+        primaryKind: [...item.kindCounts.entries()].sort((a, b) => b[1] - a[1] || classRelationKindOrder(a[0]) - classRelationKindOrder(b[0]))[0]?.[0] || "uses",
+      }));
+  }
+
+  function classRelationKindOrder(kind) {
+    return ({ inherits: 0, implements: 1, creates: 2, calls: 3, uses: 4 }[kind] ?? 9);
+  }
+
+  function compareClassTypes(a, b) {
+    return typeKindOrder(a.kind) - typeKindOrder(b.kind)
+      || a.name.localeCompare(b.name);
+  }
+
+  function classPackageNode(item, selectedTypeId) {
+    let cursorY = 64;
+    const typeRows = item.typeGroups.map(group => {
+      const heading = `<text class="class-package-kind" x="14" y="${cursorY}">${escapeHtml(group.label)} · ${group.types.length}</text>`;
+      cursorY += 17;
+      const rows = group.types.slice(0, 4).map(type => {
+        const selected = type.id === selectedTypeId;
+        const row = `<g class="class-package-type ${selected ? "is-selected" : ""} ${attr(type.kind)}" data-class-type-id="${attr(type.id)}" tabindex="0" role="button" aria-label="${attr(type.name)}">
+          <rect x="12" y="${cursorY - 12}" width="${item.width - 24}" height="15" rx="3"></rect>
+          <text x="20" y="${cursorY}">${escapeHtml(truncate(type.name, 28))}</text>
+          <text class="class-package-type-meta" x="${item.width - 18}" y="${cursorY}">${type.fanIn}/${type.fanOut}</text>
+        </g>`;
+        cursorY += 17;
+        return row;
+      }).join("");
+      if (group.types.length > 4) cursorY += 4;
+      const more = group.types.length > 4 ? `<text class="class-package-more" x="20" y="${cursorY - 2}">+ ${group.types.length - 4} more</text>` : "";
+      return heading + rows + more;
+    }).join("");
+    return `<g class="class-package ${item.isSelected ? "is-selected" : ""} ${item.isFocused ? "is-focused" : ""}" transform="translate(${item.x} ${item.y})">
+      <path class="class-package-shell" d="M 0 24 H 92 L 106 0 H ${item.width} V ${item.height} H 0 Z"></path>
+      <path class="class-package-tab" d="M 0 24 H 92 L 106 0 H ${Math.min(item.width - 18, 210)} V 24 Z"></path>
+      <text class="class-package-title" x="14" y="19">${escapeHtml(truncate(item.name, 35))}</text>
+      <text class="class-package-meta" x="14" y="45">${item.types.length} types · ${item.internalRelationCount || 0} internal relations</text>
+      ${typeRows}
     </g>`;
   }
 
-  function classEdgePath(source, target, width, height) {
-    const sourceCenterX = source.x + width / 2, sourceCenterY = source.y + height / 2;
-    const targetCenterX = target.x + width / 2, targetCenterY = target.y + height / 2;
-    if (source.x === target.x) {
-      const down = target.y > source.y;
-      const startY = down ? source.y + height : source.y;
-      const endY = down ? target.y : target.y + height;
-      const trackX = sourceCenterX + 22;
-      return `M ${sourceCenterX} ${startY} H ${trackX} V ${endY} H ${targetCenterX}`;
+  function classPackageEdgePath(source, target, edgeIndex) {
+    const sourceRight = source.x + source.width;
+    const targetRight = target.x + target.width;
+    const sourceCenterX = source.x + source.width / 2;
+    const targetCenterX = target.x + target.width / 2;
+    const sourceCenterY = source.y + source.height / 2;
+    const targetCenterY = target.y + target.height / 2;
+    const sameRow = source.row === target.row;
+    const leftToRight = source.column <= target.column;
+    const laneOffset = ((edgeIndex % 5) - 2) * 9;
+    if (sameRow) {
+      const sourceX = leftToRight ? sourceRight : source.x;
+      const targetX = leftToRight ? target.x : targetRight;
+      const midX = (sourceX + targetX) / 2 + laneOffset;
+      return `M ${sourceX} ${sourceCenterY} H ${midX} V ${targetCenterY} H ${targetX}`;
     }
-    const right = target.x > source.x;
-    const startX = right ? source.x + width : source.x;
-    const endX = right ? target.x : target.x + width;
-    const middleX = (startX + endX) / 2;
-    return `M ${startX} ${sourceCenterY} H ${middleX} V ${targetCenterY} H ${endX}`;
+    const down = source.row < target.row;
+    const sourceY = down ? source.y + source.height : source.y;
+    const targetY = down ? target.y : target.y + target.height;
+    const midY = (sourceY + targetY) / 2 + laneOffset;
+    return `M ${sourceCenterX} ${sourceY} V ${midY} H ${targetCenterX} V ${targetY}`;
   }
 
   function selectClassDiagramTypes(selected, ranked, relations, limit) {
@@ -831,13 +1023,708 @@
   function classRelationPriority(relation, selectedTypeId) { return (relation.sourceId === selectedTypeId || relation.targetId === selectedTypeId ? 100 : 0) + ({ inherits: 8, implements: 7, creates: 4, calls: 3, uses: 1 }[relation.kind] || 0); }
   function truncate(value, length) { return value.length > length ? `${value.slice(0, length - 1)}…` : value; }
 
+  function renderSourceUml() {
+    const model = sourceUmlModel();
+    const copyLabel = state.sourceUmlCopyStatus === "all" ? "복사됨" : state.sourceUmlCopyStatus === "failed" ? "복사 실패" : "전체 Mermaid 복사";
+    main.innerHTML = `
+      <header class="page-header">
+        <div>
+          <span class="eyebrow">SOURCE-BACKED UML</span>
+          <h1>C# 소스 기준 클래스 다이어그램</h1>
+          <p class="subtitle">지정된 <code>C:\\Dev\\ClaudeDev</code> 경로의 C# 파일만 근거로 작성했습니다. Mermaid classDiagram 코드이며, 추론 관계와 템플릿 내부 생성 코드는 별도 확인 목록으로 분리했습니다.</p>
+        </div>
+        <div class="source-ref">02_Server/GameServer · 02_Server/Network · PacketGenerator PDL</div>
+      </header>
+      <section class="panel source-scope-panel">
+        <div>
+          <span class="eyebrow">INCLUDED</span>
+          <p>GameServer의 Combat, Handlers, Loop, Maps, Network와 Server Network, PacketGenerator의 PDL 생성기 타입.</p>
+        </div>
+        <div>
+          <span class="eyebrow">EXCLUDED</span>
+          <p>GameServer.Tests, Bot/BgmComposer, bin/obj, PacketFormat 문자열 템플릿 안의 생성 예정 타입.</p>
+        </div>
+        <button class="ghost-button" data-copy-source-uml="all">${escapeHtml(copyLabel)}</button>
+      </section>
+      <section class="panel">
+        <div class="panel-header"><h2>발견 타입 / 관계 목록</h2><span class="muted">${model.rows.length} grouped entries</span></div>
+        <div class="source-uml-table">
+          ${model.rows.map(row => `<div class="source-uml-row">
+            <span>${escapeHtml(row.area)}</span>
+            <b>${escapeHtml(row.type)}</b>
+            <small>${escapeHtml(row.surface)}</small>
+            <em>${escapeHtml(row.relation)}</em>
+          </div>`).join("")}
+        </div>
+      </section>
+      <div class="source-uml-grid">
+        ${model.diagrams.map((diagram, index) => `<section class="panel source-uml-card">
+          <div class="panel-header">
+            <div><span class="eyebrow">${escapeHtml(diagram.group)}</span><h2>${escapeHtml(diagram.title)}</h2></div>
+            <button class="ghost-button" data-copy-source-uml="${attr(diagram.id)}">${state.sourceUmlCopyStatus === diagram.id ? "복사됨" : "복사"}</button>
+          </div>
+          <div class="source-uml-render" data-source-uml-index="${index}"><div class="source-uml-loading">Mermaid 렌더링 중</div></div>
+          <details class="mermaid-details">
+            <summary>Mermaid 코드</summary>
+            <pre class="mermaid-code"><code>${escapeHtml(diagram.code)}</code></pre>
+          </details>
+        </section>`).join("")}
+      </div>
+      <section class="panel">
+        <div class="panel-header"><h2>근거가 약한 관계 / 제외</h2><span class="muted">not drawn</span></div>
+        <div class="source-uml-table">
+          ${model.weak.map(item => `<div class="source-uml-row weak"><span>${escapeHtml(item.item)}</span><small>${escapeHtml(item.reason)}</small></div>`).join("")}
+        </div>
+      </section>`;
+    renderSourceMermaidDiagrams(model);
+  }
+
+  function renderSourceMermaidDiagrams(model) {
+    const targets = main.querySelectorAll("[data-source-uml-index]");
+    if (!window.mermaid) {
+      targets.forEach(target => { target.innerHTML = `<div class="empty-state">Mermaid 엔진을 불러오지 못했습니다.</div>`; });
+      return;
+    }
+    window.mermaid.initialize({
+      startOnLoad: false,
+      securityLevel: "loose",
+      theme: "base",
+      themeVariables: {
+        background: "#080b0f",
+        mainBkg: "#151c25",
+        primaryColor: "#151c25",
+        primaryBorderColor: "#506075",
+        primaryTextColor: "#e7edf4",
+        lineColor: "#9aa8b8",
+        textColor: "#e7edf4",
+        fontFamily: "Inter, Pretendard, Noto Sans KR, system-ui, sans-serif",
+      },
+      class: {
+        hideEmptyMembersBox: false,
+      },
+    });
+    targets.forEach(async target => {
+      const diagram = model.diagrams[Number(target.dataset.sourceUmlIndex)];
+      if (!diagram) return;
+      try {
+        const renderId = `source-uml-mermaid-${diagram.id}-${++sourceUmlRenderSeq}`;
+        const result = await window.mermaid.render(renderId, diagram.code);
+        target.innerHTML = result.svg;
+        const svg = target.querySelector("svg");
+        if (svg) {
+          svg.removeAttribute("height");
+          svg.classList.add("source-uml-mermaid-svg");
+        }
+      } catch (error) {
+        target.innerHTML = `<div class="empty-state">Mermaid 렌더링 실패: ${escapeHtml(error.message || error)}</div>`;
+      }
+    });
+  }
+
+  function copySourceUml(id) {
+    const model = sourceUmlModel();
+    const text = id === "all"
+      ? formatSourceUmlText(model)
+      : model.diagrams.find(item => item.id === id)?.code || "";
+    copyText(text).then(
+      () => { state.sourceUmlCopyStatus = id || "all"; setTimeout(() => { state.sourceUmlCopyStatus = null; render(); }, 1300); },
+      () => { state.sourceUmlCopyStatus = "failed"; setTimeout(() => { state.sourceUmlCopyStatus = null; render(); }, 1800); });
+  }
+
+  function formatSourceUmlText(model) {
+    return [
+      "# C# Source UML",
+      "",
+      "## 발견 타입 / 관계 목록",
+      ...model.rows.map(row => `- ${row.area} / ${row.type}: ${row.relation}`),
+      "",
+      ...model.diagrams.flatMap(diagram => [`## ${diagram.title}`, "```mermaid", diagram.code, "```", ""]),
+      "## 근거가 약한 관계 / 제외",
+      ...model.weak.map(item => `- ${item.item}: ${item.reason}`),
+    ].join("\n");
+  }
+
+  function renderSourceUmlDiagram(diagram) {
+    const parsed = parseMermaidClassDiagram(diagram.code);
+    const nodeWidth = 222;
+    const gapX = parsed.direction === "LR" ? 76 : 42;
+    const gapY = parsed.direction === "LR" ? 46 : 64;
+    const columns = parsed.direction === "LR" ? Math.min(4, Math.max(2, Math.ceil(parsed.classes.length / 2))) : Math.min(3, Math.max(1, parsed.classes.length));
+    let nodes = parsed.classes.map((item, index) => {
+      const row = Math.floor(index / columns);
+      const column = index % columns;
+      const height = Math.max(72, 54 + Math.min(item.members.length, 5) * 15);
+      return {
+        ...item,
+        x: 36 + column * (nodeWidth + gapX),
+        y: 34 + row * (height + gapY),
+        width: nodeWidth,
+        height,
+        row,
+        column,
+      };
+    });
+    const rows = Math.max(1, Math.ceil(nodes.length / columns));
+    const rowHeights = Array.from({ length: rows }, (_, row) =>
+      Math.max(...nodes.filter(item => item.row === row).map(item => item.height), 72));
+    nodes.forEach(item => {
+      item.y = 34 + rowHeights.slice(0, item.row).reduce((sum, height) => sum + height + gapY, 0);
+    });
+    let width = Math.max(520, 72 + columns * nodeWidth + (columns - 1) * gapX);
+    let height = Math.max(250, 68 + rowHeights.reduce((sum, item) => sum + item, 0) + (rows - 1) * gapY);
+    const preset = sourceUmlPresetLayout(diagram.id, nodes);
+    if (preset) {
+      nodes = preset.nodes;
+      width = preset.width;
+      height = preset.height;
+    }
+    const nodeByName = new Map(nodes.map(item => [item.name, item]));
+    const edges = parsed.relations.map((relation, index) => {
+      const source = nodeByName.get(relation.source);
+      const target = nodeByName.get(relation.target);
+      if (!source || !target) return "";
+      const route = sourceUmlEdgeRoute(source, target, parsed.direction, index, diagram.id);
+      return `<g class="source-uml-edge ${attr(sourceUmlRelationClass(relation.kind))}">
+        <path d="${route.path}" ${sourceUmlMarkerAttrs(relation.kind)}></path>
+        <text x="${route.labelX}" y="${route.labelY}">${escapeHtml(sourceUmlRelationLabel(relation.kind, relation.label))}</text>
+      </g>`;
+    }).join("");
+    return `<svg class="source-uml-svg" style="width:${width}px" viewBox="0 0 ${width} ${height}" role="img" aria-label="${attr(diagram.title)} rendered UML">
+      <defs>
+        <marker id="source-uml-triangle" markerWidth="12" markerHeight="10" refX="10" refY="5" orient="auto"><path d="M 1 1 L 11 5 L 1 9 Z"></path></marker>
+        <marker id="source-uml-diamond" markerWidth="14" markerHeight="10" refX="2" refY="5" orient="auto"><path d="M 2 5 L 7 1 L 12 5 L 7 9 Z"></path></marker>
+        <marker id="source-uml-hollow-diamond" markerWidth="14" markerHeight="10" refX="2" refY="5" orient="auto"><path d="M 2 5 L 7 1 L 12 5 L 7 9 Z"></path></marker>
+      </defs>
+      <rect class="source-uml-bg" width="100%" height="100%"></rect>
+      <g class="source-uml-edges">${edges}</g>
+      ${nodes.map(node => sourceUmlNode(node)).join("")}
+    </svg>`;
+  }
+
+  function sourceUmlPresetLayout(diagramId, nodes) {
+    if (diagramId !== "overview") return null;
+    const positions = {
+      Handlers: [36, 154],
+      GameServerNetwork: [354, 154],
+      Loop: [440, 32],
+      Maps: [852, 105],
+      Combat: [1232, 105],
+      ServerNetwork: [812, 296],
+      PacketGenerator: [370, 306],
+    };
+    const laidOut = nodes.map(node => {
+      const [x, y] = positions[node.name] || [node.x, node.y];
+      return { ...node, x, y, width: node.name === "GameServerNetwork" ? 220 : 150, height: 70, overview: true };
+    });
+    return { nodes: laidOut, width: 1420, height: 455 };
+  }
+
+  function parseMermaidClassDiagram(code) {
+    const classes = new Map();
+    const relations = [];
+    let direction = "TB";
+    let current = null;
+    code.split(/\r?\n/).forEach(rawLine => {
+      const line = rawLine.trim();
+      if (!line || line === "classDiagram") return;
+      const directionMatch = line.match(/^direction\s+(LR|TB)$/);
+      if (directionMatch) {
+        direction = directionMatch[1];
+        return;
+      }
+      const relationMatch = line.match(/^(.+?)\s+(--\|>|\.\.\|>|\*--|o--|\.\.>)\s+(.+?)(?:\s*:\s*(.+))?$/);
+      if (relationMatch) {
+        const [, source, kind, target, label] = relationMatch;
+        relations.push({ source: source.trim(), kind, target: target.trim(), label: label || "" });
+        ensureSourceUmlClass(classes, source.trim());
+        ensureSourceUmlClass(classes, target.trim());
+        return;
+      }
+      const inlineClassMatch = line.match(/^class\s+([^\s{]+)\s*\{\s*(.*?)\s*\}$/);
+      if (inlineClassMatch) {
+        const item = ensureSourceUmlClass(classes, inlineClassMatch[1]);
+        if (inlineClassMatch[2]) item.members.push(inlineClassMatch[2]);
+        current = null;
+        return;
+      }
+      const classMatch = line.match(/^class\s+([^\s{]+)(?:\s*\{)?$/);
+      if (classMatch) {
+        current = ensureSourceUmlClass(classes, classMatch[1]);
+        if (!line.endsWith("{")) current = null;
+        return;
+      }
+      if (line === "}") {
+        current = null;
+        return;
+      }
+      if (current) {
+        current.members.push(line);
+      }
+    });
+    return { direction, classes: [...classes.values()], relations };
+  }
+
+  function ensureSourceUmlClass(classes, name) {
+    if (!classes.has(name)) classes.set(name, { name, members: [] });
+    return classes.get(name);
+  }
+
+  function sourceUmlEdgeRoute(source, target, direction, index, diagramId = "") {
+    if (diagramId === "overview") return sourceUmlOverviewEdgeRoute(source, target);
+    const offset = ((index % 5) - 2) * 7;
+    if (direction === "LR") {
+      const sourceX = source.x + source.width;
+      const targetX = target.x;
+      const sourceY = source.y + source.height / 2;
+      const targetY = target.y + target.height / 2;
+      const midX = (sourceX + targetX) / 2 + offset;
+      return {
+        path: `M ${sourceX} ${sourceY} H ${midX} V ${targetY} H ${targetX}`,
+        labelX: midX,
+        labelY: (sourceY + targetY) / 2 - 7,
+      };
+    }
+    const sourceX = source.x + source.width / 2;
+    const targetX = target.x + target.width / 2;
+    const sourceY = source.y + source.height;
+    const targetY = target.y;
+    const midY = (sourceY + targetY) / 2 + offset;
+    return {
+      path: `M ${sourceX} ${sourceY} V ${midY} H ${targetX} V ${targetY}`,
+      labelX: (sourceX + targetX) / 2,
+      labelY: midY - 7,
+    };
+  }
+
+  function sourceUmlOverviewEdgeRoute(source, target) {
+    const sourceCenterY = source.y + source.height / 2;
+    const targetCenterY = target.y + target.height / 2;
+    const sourceCenterX = source.x + source.width / 2;
+    const targetCenterX = target.x + target.width / 2;
+    const sourceRight = source.x + source.width;
+    const targetLeft = target.x;
+    const targetRight = target.x + target.width;
+    if (source.name === "Loop" && target.name === "Maps") {
+      return { path: `M ${sourceRight} ${sourceCenterY} C 600 58, 715 78, ${targetLeft} ${targetCenterY}`, labelX: 645, labelY: 80 };
+    }
+    if (source.name === "Maps" && target.name === "Combat") {
+      return { path: `M ${source.x + source.width} ${sourceCenterY} H ${target.x}`, labelX: 1050, labelY: sourceCenterY - 10 };
+    }
+    if (source.name === "GameServerNetwork" && target.name === "Maps") {
+      return { path: `M ${sourceRight} ${sourceCenterY - 12} C 600 138, 695 122, ${targetLeft} ${targetCenterY - 4}`, labelX: 670, labelY: 128 };
+    }
+    if (source.name === "Maps" && target.name === "GameServerNetwork") {
+      return { path: `M ${targetLeft} ${targetCenterY + 8} C 690 206, 595 201, ${sourceRight} ${sourceCenterY + 14}`, labelX: 695, labelY: 202 };
+    }
+    if (source.name === "GameServerNetwork" && target.name === "ServerNetwork") {
+      return { path: `M ${sourceRight - 2} ${source.y + source.height} L ${target.x + 18} ${target.y}`, labelX: 642, labelY: 294 };
+    }
+    if (source.name === "PacketGenerator" && target.name === "ServerNetwork") {
+      return { path: `M ${source.x + source.width} ${sourceCenterY} L ${target.x} ${targetCenterY}`, labelX: 650, labelY: 372 };
+    }
+    return {
+      path: `M ${sourceRight} ${sourceCenterY} H ${(sourceRight + targetLeft) / 2} V ${targetCenterY} H ${targetLeft}`,
+      labelX: (sourceCenterX + targetCenterX) / 2,
+      labelY: (sourceCenterY + targetCenterY) / 2 - 8,
+    };
+  }
+
+  function sourceUmlNode(node) {
+    const members = node.members.slice(0, 5);
+    const stereotype = members.find(item => item.startsWith("<<"));
+    const visibleMembers = members.filter(item => !item.startsWith("<<"));
+    return `<g class="source-uml-node ${node.overview ? "is-overview" : ""}" transform="translate(${node.x} ${node.y})">
+      <rect width="${node.width}" height="${node.height}" rx="5"></rect>
+      <line x1="0" y1="35" x2="${node.width}" y2="35"></line>
+      <text class="source-uml-title" x="12" y="${stereotype ? 18 : 24}">${escapeHtml(truncate(node.name, 32))}</text>
+      ${stereotype ? `<text class="source-uml-stereotype" x="12" y="31">${escapeHtml(stereotype)}</text>` : ""}
+      ${visibleMembers.map((member, index) => `<text class="source-uml-member" x="12" y="${53 + index * 15}">${escapeHtml(truncate(member, 36))}</text>`).join("")}
+    </g>`;
+  }
+
+  function sourceUmlRelationClass(kind) {
+    return ({ "--|>": "extends", "..|>": "implements", "*--": "composition", "o--": "aggregation", "..>": "dependency" }[kind] || "dependency");
+  }
+
+  function sourceUmlMarkerAttrs(kind) {
+    if (kind === "--|>" || kind === "..|>") return `marker-end="url(#source-uml-triangle)"`;
+    if (kind === "*--") return `marker-start="url(#source-uml-diamond)"`;
+    if (kind === "o--") return `marker-start="url(#source-uml-hollow-diamond)"`;
+    return "";
+  }
+
+  function sourceUmlRelationLabel(kind, label) {
+    const symbol = ({ "--|>": "상속", "..|>": "구현", "*--": "합성", "o--": "집약", "..>": "의존" }[kind] || "관계");
+    return label ? `${symbol} · ${label}` : symbol;
+  }
+
+  function sourceUmlModel() {
+    return {
+      rows: [
+        { area: "Combat", type: "EnemyEntity, AABB, EnemyState, CombatConstants", surface: "공개 combat state/value API", relation: "EnemyEntity *-- AABB, EnemyEntity o-- EnemyState" },
+        { area: "Handlers", type: "IPacketHandler + concrete handlers", surface: "Handle(GameSession, ArraySegment<byte>)", relation: "handlers ..|> IPacketHandler, HandlerRegistry o-- IPacketHandler" },
+        { area: "Loop", type: "GameWorld, TickScheduler, TickMetrics, Stats", surface: "world/tick lifecycle", relation: "GameWorld *-- GameMap, GameWorld *-- TickScheduler, TickMetrics *-- Stats" },
+        { area: "Maps", type: "GameMap, PlayerEntity, Portal, systems", surface: "map actor, players, enemies, portal table", relation: "GameMap *-- PlayerEntity/EnemyEntity/systems, PlayerEntity *-- InputCommand" },
+        { area: "Maps/States", type: "ActorState<T>, StateMachine<T>, player/enemy/boss states", surface: "state enter/tick/exit API", relation: "state classes --|> ActorState<T>, StateMachine *-- ActorState" },
+        { area: "GameServer Network", type: "GameSession, IntentRateLimiter, MapMigration", surface: "session lifecycle and map migration hooks", relation: "GameSession --|> PacketSession, GameSession *-- IntentRateLimiter" },
+        { area: "02_Server/Network", type: "Session, PacketSession, Listener, Connector, buffers, queues", surface: "socket/session/buffer primitives", relation: "PacketSession --|> Session, JobQueue ..|> IJobQueue" },
+        { area: "PacketGenerator", type: "Program, PacketFormat", surface: "PDL parse methods and format strings", relation: "Program ..> PacketFormat" },
+      ],
+      diagrams: [
+        diagram("overview", "Overview", "폴더 간 개요", String.raw`classDiagram
+direction LR
+class Combat
+class Handlers
+class Loop
+class Maps
+class GameServerNetwork
+class ServerNetwork
+class PacketGenerator
+
+GameServerNetwork --|> ServerNetwork : GameSession -> PacketSession
+Handlers ..> GameServerNetwork : Handle(GameSession)
+Loop *-- Maps : GameWorld owns GameMap
+Maps *-- Combat : GameMap owns EnemyEntity
+Maps ..> GameServerNetwork : PlayerEntity Owner / Broadcast
+GameServerNetwork ..> Maps : GetMap / migration
+PacketGenerator ..> ServerNetwork : template references PacketSession`),
+        diagram("combat", "Combat", "Combat", String.raw`classDiagram
+direction TB
+class CombatConstants {
+  +float AttackRange
+  +float AttackRangeSquared
+  +float AttackHalfExtent
+  +int BaseDamage
+  +long AttackCooldownMs
+  +int AnimLatchTicks
+  +int BossBaseDamage
+}
+class EnemyState {
+  <<enum>>
+}
+class AABB {
+  +Vector2 Center
+  +Vector2 HalfExtent
+  +AABB(Vector2 center, Vector2 halfExtent)
+  +bool Contains(Vector2 point)
+  +bool Intersects(AABB other)
+}
+class EnemyEntity {
+  +int EntityId
+  +EnemyKind Kind
+  +float X
+  +float Y
+  +int Hp
+  +int MaxHp
+  +bool IsDead
+  +EnemyStats Stats
+  +AABB Hitbox
+  +EnemyState State
+  +void EnterHitState(float dirX)
+}
+EnemyEntity *-- AABB : Hitbox
+EnemyEntity o-- EnemyState : State`),
+        diagram("handlers", "Handlers", "Handlers", String.raw`classDiagram
+direction TB
+class IPacketHandler {
+  <<interface>>
+  +Handle(GameSession session, ArraySegment~byte~ buffer)
+}
+class AttackHandler { +void Handle(GameSession session, ArraySegment~byte~ buffer) }
+class CharacterSelectHandler { +void Handle(GameSession session, ArraySegment~byte~ buffer) }
+class EnterPortalHandler { +void Handle(GameSession session, ArraySegment~byte~ buffer) }
+class HandshakeHandler { +void Handle(GameSession session, ArraySegment~byte~ buffer) }
+class MoveIntentHandler { +void Handle(GameSession session, ArraySegment~byte~ buffer) }
+class PingHandler { +void Handle(GameSession session, ArraySegment~byte~ buffer) }
+class HandlerRegistry {
+  +bool TryGet(PacketID id, out IPacketHandler handler)
+}
+AttackHandler ..|> IPacketHandler
+CharacterSelectHandler ..|> IPacketHandler
+EnterPortalHandler ..|> IPacketHandler
+HandshakeHandler ..|> IPacketHandler
+MoveIntentHandler ..|> IPacketHandler
+PingHandler ..|> IPacketHandler
+HandlerRegistry o-- IPacketHandler : registry`),
+        diagram("loop", "Loop", "Loop", String.raw`classDiagram
+direction TB
+class GameWorld {
+  +GameWorld Instance
+  +int NextEntityId()
+  +GameMap Map
+  +long CurrentTick
+  +TickScheduler Scheduler
+  +GameWorld(IReadOnlyDictionary provider)
+  +void Start()
+  +void Stop()
+  +GameMap? GetMap(MapId id)
+}
+class TickScheduler {
+  +long CurrentTick
+  +event Action~TickMetrics.Stats~ OnMetricsSnapshot
+  +TickScheduler(Action~long~ onTick)
+  +void Start()
+  +void Stop()
+}
+class TickMetrics {
+  +int BucketSize
+  +void Record(long elapsedMicros)
+  +bool IsBucketFull
+  +int Count
+  +Stats SnapshotAndReset()
+  +Stats Compute()
+}
+class Stats {
+  <<record struct>>
+  +Stats Empty
+  +string Format()
+}
+GameWorld *-- TickScheduler : _scheduler
+GameWorld *-- GameMap : _maps
+TickMetrics *-- Stats : snapshot`),
+        diagram("maps-core", "Maps Core / Systems", "Maps", String.raw`classDiagram
+direction TB
+class GameMap {
+  +IReadOnlyList~PlayerEntity~ Players
+  +IReadOnlyDictionary~int, EnemyEntity~ Enemies
+  +bool IsStageCleared
+  +MapId MapId
+  +IReadOnlyList~Portal~ Portals
+  +PlayerEntity AddPlayer(GameSession? owner, Vector2 spawnPos, PlayerStats? stats)
+  +bool RemovePlayer(int entityId)
+  +PlayerEntity? GetPlayer(int entityId)
+  +void BroadcastToAll(ArraySegment~byte~ payload, GameSession? except)
+  +void Tick(long tickNumber)
+}
+class PlayerEntity {
+  +int EntityId
+  +Vector2 Position
+  +GameSession? Owner
+  +PlayerStats Stats
+  +Vector2 Velocity
+  +bool OnGround
+  +void EnqueueInput(sbyte inputX, bool jumpPressed, uint clientTick)
+  +bool TryDequeueInput(out InputCommand cmd)
+  +void EnterAttackState()
+  +void EnterHitState(float dirX)
+  +void Revive()
+}
+class InputCommand {
+  <<readonly struct>>
+  +sbyte InputX
+  +bool JumpPressed
+  +uint ClientTick
+}
+class Portal {
+  <<record>>
+}
+class PortalTable {
+  +IReadOnlyList~Portal~ GetPortalsFor(MapId mapId)
+}
+class MapId {
+  <<enum>>
+}
+class CombatSystem
+class EnemyAISystem
+class BossBehaviorSystem
+class RespawnSystem
+GameMap *-- PlayerEntity : _players
+GameMap *-- EnemyEntity : _enemies
+GameMap o-- Portal : Portals
+GameMap *-- CombatSystem
+GameMap *-- EnemyAISystem
+GameMap *-- BossBehaviorSystem
+GameMap *-- RespawnSystem
+PlayerEntity *-- InputCommand : input queue
+PortalTable ..> Portal : returns`),
+        diagram("player-states", "Maps / Player States", "Maps", String.raw`classDiagram
+direction TB
+class ActorState~TActor~ {
+  +AnimState AnimState
+  +bool LocksMovement
+  +bool InterruptibleByHit
+  +void Enter(TActor actor)
+  +ActorState~TActor~? Tick(TActor actor)
+  +void Exit(TActor actor)
+}
+class StateMachine~TActor~ {
+  +ActorState~TActor~ CurrentState
+  +AnimState AnimState
+  +void ChangeState(ActorState~TActor~ next, TActor actor)
+  +void Tick(TActor actor)
+}
+class PlayerMovementStates
+class PlayerCombatStates
+class IdleState
+class MoveState
+class JumpState
+class AttackState
+class HitState
+class DeathState
+IdleState --|> ActorState~PlayerEntity~
+MoveState --|> ActorState~PlayerEntity~
+JumpState --|> ActorState~PlayerEntity~
+AttackState --|> ActorState~PlayerEntity~
+HitState --|> ActorState~PlayerEntity~
+DeathState --|> ActorState~PlayerEntity~
+StateMachine~PlayerEntity~ *-- ActorState~PlayerEntity~ : _current
+PlayerMovementStates *-- IdleState
+PlayerMovementStates *-- MoveState
+PlayerMovementStates *-- JumpState
+PlayerCombatStates *-- AttackState
+PlayerCombatStates *-- HitState
+PlayerCombatStates *-- DeathState`),
+        diagram("enemy-states", "Maps / Enemy & Boss States", "Maps", String.raw`classDiagram
+direction TB
+class ActorState~TActor~ {
+  +AnimState AnimState
+  +bool LocksMovement
+  +bool InterruptibleByHit
+  +void Enter(TActor actor)
+  +ActorState~TActor~? Tick(TActor actor)
+  +void Exit(TActor actor)
+}
+class EnemyStates
+class BossStates
+class PatrolState
+class ChaseState
+class EnemyHitState
+class BossIdleState
+class BossMoveState
+class BossTelegraphState
+class BossAttackState
+PatrolState --|> ActorState~EnemyEntity~
+ChaseState --|> ActorState~EnemyEntity~
+EnemyHitState --|> ActorState~EnemyEntity~
+BossIdleState --|> ActorState~EnemyEntity~
+BossMoveState --|> ActorState~EnemyEntity~
+BossTelegraphState --|> ActorState~EnemyEntity~
+BossAttackState --|> ActorState~EnemyEntity~
+EnemyStates *-- PatrolState
+EnemyStates *-- ChaseState
+EnemyStates *-- EnemyHitState
+BossStates *-- BossIdleState
+BossStates *-- BossMoveState
+BossStates *-- BossTelegraphState
+BossStates *-- BossAttackState`),
+        diagram("gameserver-network", "GameServer Network", "Network", String.raw`classDiagram
+direction TB
+class PacketSession {
+  +int HeaderSize
+  +int PacketIdSize
+  +int MinFrameSize
+  +int MaxFrameSize
+  +int OnRecv(ArraySegment~byte~ buffer)
+  +void OnRecvPacket(ArraySegment~byte~ buffer)
+}
+class GameSession {
+  #bool HasSelectedClass
+  #void SetCharacterClass(byte characterClass)
+  #GameMap? GetMap()
+  #GameMap? GetDestMap(MapId destMapId)
+  +void OnConnected(EndPoint endPoint)
+  #void EnterGameWorld()
+  #void CompleteHandshakeAndEnter()
+  #void EnterGameWorldIfReady()
+  +void OnDisconnected(EndPoint endPoint)
+  +void OnSend(int numOfBytes)
+  +void OnRecvPacket(ArraySegment~byte~ buffer)
+}
+class IntentRateLimiter {
+  +int LimitPerSecond
+  +bool TryConsume(out bool firstWarn)
+}
+class MapMigration {
+  +void Execute(...)
+}
+GameSession --|> PacketSession
+GameSession *-- IntentRateLimiter : _rateLimiter
+MapMigration ..> GameSession : migration hooks
+MapMigration ..> GameMap : source/destination maps`),
+        diagram("server-network", "02_Server/Network", "ServerNetwork", String.raw`classDiagram
+direction TB
+class Session {
+  #Socket? _socket
+  #int _disconnected
+  #object _lock
+  #Queue~ArraySegment~byte~~ _sendQueue
+  +void OnConnected(EndPoint endPoint)
+  +void OnDisconnected(EndPoint endPoint)
+  +int OnRecv(ArraySegment~byte~ buffer)
+  +void OnSend(int numOfBytes)
+  +void Start(Socket socket)
+  +void Send(ArraySegment~byte~ sendBuff)
+  +void Send(List~ArraySegment~byte~~ sendBuffList)
+  +void Disconnect()
+}
+class PacketSession {
+  +int OnRecv(ArraySegment~byte~ buffer)
+  +void OnRecvPacket(ArraySegment~byte~ buffer)
+}
+class Listener {
+  +void Init(IPEndPoint endPoint, Func~Session~ sessionFactory, int register = 10)
+  +Socket Accept()
+}
+class Connector {
+  +void Connect(IPEndPoint endPoint, Func~Session~ sessionFactory, int count = 1)
+}
+class RecvBuffer
+class SendBuffer
+class SendBufferHelper
+class IJobQueue { +void Push(Action job) }
+class JobQueue { +void Push(Action job) }
+class FrameValidator { +bool TryValidateFrameHeader(ushort dataSize, out string? reason) }
+PacketSession --|> Session
+Session *-- RecvBuffer : _recvBuffer
+Listener o-- Session : factory
+Connector o-- Session : factory
+SendBufferHelper *-- SendBuffer : current
+JobQueue ..|> IJobQueue`),
+        diagram("packet-generator", "PacketGenerator / PDL", "Tool", String.raw`classDiagram
+direction TB
+class Program {
+  +void ParsePacket(XmlReader r)
+  +Tuple~string,string,string~ ParseMembers(XmlReader r)
+  +Tuple~string,string,string~ ParseList(XmlReader r)
+  +string ToMemberType(string memberType)
+  +string FirstCharToUpper(string s)
+  +string FirstCharToLower(string s)
+}
+class PacketFormat {
+  +string managerFormat
+  +string mangerRegisterFormat
+  +string fileFormat
+  +string packetEnumFormat
+  +string packetFormat
+  +string MemberFormat
+  +string MemberListFormat
+  +string ReadFormat
+  +string WriteFormat
+}
+Program ..> PacketFormat : string templates`),
+      ],
+      weak: [
+        { item: "PacketFormat.cs 내부 PacketManager/IPacket/PacketID", reason: "실제 타입 선언이 아니라 문자열 템플릿 안의 생성 예정 코드라 제외했습니다." },
+        { item: "Handler -> GameMap/Packet 세부 관계", reason: "Handle 내부 decode/call 기반의 transitive 의존이라 UML 관계선에서 생략했습니다." },
+        { item: "TickScheduler -> TickMetrics", reason: "필드 보유가 아니라 RunLoop local 생성이므로 합성으로 그리지 않았습니다." },
+        { item: "Shared 타입들", reason: "PlayerStats, EnemyStats, PacketID 등은 대상 경로 밖이라 타입 박스에서 제외했습니다." },
+        { item: "PortalTable -> Portal", reason: "정적 반환 관계라 약한 dependency로만 표시했습니다." },
+      ],
+    };
+  }
+
+  function diagram(id, group, title, code) {
+    return { id, group, title, code };
+  }
+
   function renderExplorer() {
     const type = typeById.get(state.selectedTypeId) || data.types[0];
     if (!type) { main.innerHTML = empty("표시할 타입이 없습니다."); return; }
     const diagnostics = diagnosticsByType.get(type.id) || [];
-    const methods = methodsByType.get(type.id) || [];
-    const outgoing = (outgoingByType.get(type.id) || []).filter(relation => relationEndpointVisible(relation.targetId));
-    const incoming = (incomingByType.get(type.id) || []).filter(relation => relationEndpointVisible(relation.sourceId));
+    const methods = [...(methodsByType.get(type.id) || [])].sort((a, b) => a.name.localeCompare(b.name) || a.signature.localeCompare(b.signature));
+    const fields = type.members.filter(member => member.kind === "field").sort((a, b) => a.name.localeCompare(b.name));
+    const outgoing = sortLocalRelations((outgoingByType.get(type.id) || []).filter(relation => relationEndpointVisible(relation.targetId)), "out");
+    const incoming = sortLocalRelations((incomingByType.get(type.id) || []).filter(relation => relationEndpointVisible(relation.sourceId)), "in");
     main.innerHTML = `
       <header class="page-header">
         <div>
@@ -847,7 +1734,7 @@
           <div class="badge-row">
             ${type.patterns.map(pattern => badge(pattern, "accent")).join("")}
             ${type.responsibilities.map(item => badge(item)).join("")}
-            ${diagnostics.map(item => badge(`${item.principle}: ${item.title}`, item.severity)).join("")}
+            ${diagnostics.length ? badge(`${diagnostics.length}개 검토 신호`, diagnostics.some(item => item.severity === "high") ? "high" : "medium") : ""}
           </div>
         </div>
         <div class="source-ref">${escapeHtml(type.file)}:${type.startLine}</div>
@@ -861,11 +1748,11 @@
           <div class="panel-header"><h2>로컬 관계 단계</h2><span class="muted">들어옴 → 현재 → 나감</span></div>
           ${renderGraph(type, outgoing, incoming)}
         </section>
-        <section class="panel">
+        <section class="panel explorer-dependencies">
           <div class="panel-header"><h2>의존 관계</h2><span class="muted">out ${outgoing.length} / in ${incoming.length}</span></div>
           <div class="relation-list">
-            ${outgoing.slice(0, 12).map(relation => relationItem(relation, "out")).join("")}
             ${incoming.slice(0, 8).map(relation => relationItem(relation, "in")).join("")}
+            ${outgoing.slice(0, 12).map(relation => relationItem(relation, "out")).join("")}
             ${outgoing.length + incoming.length ? "" : empty("프로젝트 내부 관계가 없습니다.")}
           </div>
         </section>
@@ -873,14 +1760,39 @@
       <div class="detail-grid">
         <section class="panel">
           <div class="panel-header"><h2>메서드</h2><span class="muted">클릭하면 호출 탐색</span></div>
-          <div class="method-list">${methods.map(methodItem).join("") || empty("메서드가 없습니다.")}</div>
+          <div class="method-access-groups">${renderMethodAccessGroups(methods)}</div>
         </section>
         <section class="panel">
-          <div class="panel-header"><h2>멤버와 진단</h2><span class="muted">${type.members.length} members</span></div>
-          <div class="member-list">${type.members.slice(0, 30).map(member => `<div class="member-item"><span class="relation-kind">${escapeHtml(member.kind)}</span><span class="method-signature">${escapeHtml(member.type)} ${escapeHtml(member.name)}</span></div>`).join("")}</div>
-          ${diagnostics.length ? `<div class="diagnostic-list" style="margin-top:14px">${diagnostics.map(diagnosticCard).join("")}</div>` : ""}
+          <div class="panel-header"><h2>필드</h2><span class="muted">${fields.length} fields</span></div>
+          <div class="member-list">${fields.slice(0, 30).map(member => `<div class="member-item"><span class="relation-kind">${escapeHtml(member.modifiers.join(" ") || "unknown")}</span><span class="method-signature">${escapeHtml(member.type)} ${escapeHtml(member.name)}</span></div>`).join("") || empty("필드가 없습니다.")}</div>
+          <div class="diagnostic-summary">
+            <div><span class="eyebrow">REVIEW SIGNALS</span><strong>${diagnostics.length}개</strong><p>${diagnostics.length ? [...new Set(diagnostics.map(item => item.principle))].join(" · ") : "현재 타입에 연결된 검토 신호가 없습니다."}</p></div>
+            <button class="ghost-button" data-diagnostic-type="${attr(type.id)}">진단 탭 열기</button>
+          </div>
         </section>
       </div>`;
+  }
+
+  function renderMethodAccessGroups(methods) {
+    const labels = [
+      ["public", "public"],
+      ["protected-internal", "protected / internal"],
+      ["private", "private"],
+      ["unknown", "unknown"],
+    ];
+    const groups = groupBy(methods, methodAccessGroup);
+    return labels.map(([key, label]) => {
+      const items = groups.get(key) || [];
+      return `<section class="method-access-group"><header><span>${label}</span><small>${items.length}</small></header><div class="method-list">${items.map(methodItem).join("") || empty("해당 접근 수준의 메서드가 없습니다.")}</div></section>`;
+    }).join("");
+  }
+
+  function methodAccessGroup(method) {
+    const modifiers = new Set(method.modifiers || []);
+    if (modifiers.has("public")) return "public";
+    if (modifiers.has("protected") || modifiers.has("internal")) return "protected-internal";
+    if (modifiers.has("private")) return "private";
+    return "unknown";
   }
 
   function renderCalls() {
@@ -921,12 +1833,15 @@
 
   function renderDiagnostics() {
     const principles = [...new Set(data.diagnostics.map(item => item.principle))].sort();
+    const contextType = typeById.get(state.diagnosticTypeId);
     const filtered = data.diagnostics.filter(item =>
+      (!contextType || item.typeId === contextType.id) &&
       (state.diagnosticSeverity === "all" || item.severity === state.diagnosticSeverity) &&
       (state.diagnosticPrinciple === "all" || item.principle === state.diagnosticPrinciple));
     const copyLabel = state.diagnosticCopyStatus === "copied" ? "복사됨" : state.diagnosticCopyStatus === "failed" ? "복사 실패" : "텍스트로 복사";
     main.innerHTML = `
       <header class="page-header"><div><span class="eyebrow">DESIGN REVIEW</span><h1>SOLID와 결합도 신호</h1><p class="subtitle">자동 판정이 아닌 검토 목록입니다. 클래스가 실제로 몇 가지 이유로 변경되는지, 추상화가 이해 비용을 줄이는지 확인하세요.</p></div><div class="source-ref">${filtered.length} signals</div></header>
+      ${contextType ? `<div class="diagnostic-context"><div><span class="eyebrow">TYPE CONTEXT</span><strong>${escapeHtml(contextType.name)}</strong><span>${escapeHtml(contextType.fullName)}</span></div><button class="ghost-button" data-diagnostic-type="">전체 타입 보기</button></div>` : ""}
       <div class="diagnostic-actions">
         <button class="ghost-button" data-copy-diagnostics ${filtered.length ? "" : "disabled"}>${escapeHtml(copyLabel)}</button>
         <span class="copy-status ${state.diagnosticCopyStatus === "failed" ? "is-error" : ""}">${escapeHtml(diagnosticCopyMessage(filtered.length))}</span>
@@ -942,6 +1857,7 @@
 
   function currentDiagnostics() {
     return data.diagnostics.filter(item =>
+      (!state.diagnosticTypeId || item.typeId === state.diagnosticTypeId) &&
       (state.diagnosticSeverity === "all" || item.severity === state.diagnosticSeverity) &&
       (state.diagnosticPrinciple === "all" || item.principle === state.diagnosticPrinciple));
   }
@@ -1036,12 +1952,13 @@
     const outgoing = (outgoingByType.get(type.id) || []).filter(relation => relationEndpointVisible(relation.targetId));
     const incoming = (incomingByType.get(type.id) || []).filter(relation => relationEndpointVisible(relation.sourceId));
     const diagnostics = diagnosticsByType.get(type.id) || [];
+    const diagnosticPrinciples = [...new Set(diagnostics.map(item => item.principle))];
     contextPanel.innerHTML = `
       <section class="context-card"><span class="eyebrow">PINNED TYPE</span><h3>${escapeHtml(type.name)}</h3><p>${escapeHtml(type.file)}:${type.startLine}</p><div class="badge-row">${badge(type.kind)}${badge(type.layer, "accent")}</div></section>
       ${method ? `<section class="context-card"><span class="eyebrow">PINNED METHOD</span><h3>${escapeHtml(method.name)}</h3><p>${escapeHtml(method.signature)}</p><button class="link-button" data-method-id="${attr(method.id)}">호출 트리 열기</button></section>` : ""}
       <section class="context-card"><h3>나가는 관계</h3><div class="context-list">${outgoing.slice(0, 9).map(relation => contextRelation(relation, "out")).join("") || `<p>없음</p>`}</div></section>
       <section class="context-card"><h3>들어오는 관계</h3><div class="context-list">${incoming.slice(0, 9).map(relation => contextRelation(relation, "in")).join("") || `<p>없음</p>`}</div></section>
-      <section class="context-card"><h3>검토 신호</h3>${diagnostics.map(item => `<p><span class="badge ${item.severity}">${escapeHtml(item.principle)}</span> ${escapeHtml(item.title)}</p>`).join("") || `<p>현재 신호 없음</p>`}</section>`;
+      <section class="context-card"><h3>검토 신호 요약</h3><p>${diagnostics.length ? `${diagnostics.length}개 · ${escapeHtml(diagnosticPrinciples.join(" · "))}` : "현재 신호 없음"}</p><button class="link-button" data-diagnostic-type="${attr(type.id)}">진단 탭에서 확인</button></section>`;
   }
 
   function renderGraph(type, outgoing, incoming) {
@@ -1068,6 +1985,20 @@
       </div>
       ${pageCount > 1 ? `<div class="relation-pagination"><button class="chip" data-local-page="${Math.max(0, state.localRelationPage - 1)}" ${state.localRelationPage === 0 ? "disabled" : ""}>이전</button><span>${state.localRelationPage + 1} / ${pageCount}</span><button class="chip" data-local-page="${Math.min(pageCount - 1, state.localRelationPage + 1)}" ${state.localRelationPage === pageCount - 1 ? "disabled" : ""}>다음</button></div>` : ""}
     </div>`;
+  }
+
+  function sortLocalRelations(relations, direction) {
+    return [...relations].sort((a, b) => {
+      const aType = typeById.get(direction === "out" ? a.targetId : a.sourceId);
+      const bType = typeById.get(direction === "out" ? b.targetId : b.sourceId);
+      return a.kind.localeCompare(b.kind)
+        || typeKindOrder(aType?.kind) - typeKindOrder(bType?.kind)
+        || (aType?.name || "").localeCompare(bType?.name || "");
+    });
+  }
+
+  function typeKindOrder(kind) {
+    return ({ interface: 0, class: 1, record: 2, struct: 3, "record-struct": 4, enum: 5 }[kind] ?? 9);
   }
 
   function relationStage(title, count, relations, direction) {
