@@ -40,6 +40,10 @@ def main() -> int:
     assert 'id="sidebar-toggle"' in index and 'id="context-toggle"' in index, "Side panel visibility controls are missing"
     assert "http://" not in index and "https://" not in index, "_index.html must not depend on a network resource"
 
+    pages_workflow = (ROOT / ".github/workflows/pages.yml").read_text(encoding="utf-8")
+    assert "cp _index.html _site/index.html" in pages_workflow, "GitHub Pages must expose _index.html as the deployed index.html"
+    assert "path: _site" in pages_workflow, "GitHub Pages must deploy the prepared static artifact"
+
     app = (ROOT / "assets/app.js").read_text(encoding="utf-8")
     styles = (ROOT / "assets/styles.css").read_text(encoding="utf-8")
     analysis_config = json.loads((ROOT / "config/analysis-config.json").read_text(encoding="utf-8"))
