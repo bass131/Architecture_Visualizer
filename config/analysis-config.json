@@ -4,7 +4,7 @@
     "03_Client/Assets/Scripts",
     "04_ClientNet",
     "98_Shared",
-    "99_Tools"
+    "99_Tools/PacketGenerator"
   ],
   "excludeSegments": [
     "/bin/",

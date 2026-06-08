@@ -2,7 +2,7 @@
 
 `C:\Dev\ClaudeDev`의 C# 구조를 읽기 전용으로 분석하고 `_index.html`에서 탐색하는 독립 프로젝트입니다. 소스 프로젝트와 Git 기록, 생성물, 에이전트 설정을 공유하지 않습니다.
 
-기본 분석은 제품 코드와 QA 도구를 대상으로 하며 TDD 단위·통합 테스트 프로젝트는 집계에서 제외합니다.
+기본 분석은 `Server`, `Client`, `ClientNet`, `Shared`, `Tool`의 다섯 영역을 대상으로 합니다. `Tool`은 `PacketGenerator`만 포함하며 TDD 테스트, 헤드리스 봇, 기타 도구는 집계에서 제외합니다.
 
 [아키텍처 Atlas 바로 열기](https://bass131.github.io/Architecture_Visualizer/_index.html)
 
@@ -32,8 +32,9 @@ cd /mnt/c/Dev/DawnHolder_Architecture
 ## 화면 구성
 
 - **전체 개요**: 레이어와 주요 통계
-- **전체 흐름**: 이동, 전투, 맵 전환, 헤드리스 검증을 동적 시퀀스 다이어그램으로 탐색
-- **클래스 맵**: 클라이언트, 서버, 공유 영역의 핵심 타입과 내부 관계를 선택 중심으로 탐색
+- **전체 흐름**: 이동, 전투, 맵 전환, 패킷 생성을 동적 시퀀스 다이어그램으로 탐색
+- **전체 구조도**: 실행 영역, 생성 도구, 공유 계약, 신뢰 경계를 high-level diagram으로 확인
+- **클래스 맵**: Client, ClientNet, Server, Shared, Tool 영역의 핵심 타입과 내부 관계를 선택 중심으로 탐색
 - **구조 탐색**: 타입 관계, 멤버, 메서드, 진단
 - **SOLID 진단**: SRP, ISP, DIP, 결합도, 순환 의존 신호
 - **호출 탐색**: 메서드 호출과 역호출 트리

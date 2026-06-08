@@ -20,7 +20,7 @@ C:\Dev\ClaudeDev (*.cs and domain docs, external read-only input)
 - `styles.css`: 시각 체계
 - `refresh.ps1`: 빌드, 분석, 검증 오케스트레이션
 
-기본 분석 입력은 제품 코드와 QA 실행 도구이며, `testMarkers`에 해당하는 TDD 단위·통합 테스트 파일은 집계 전에 제외합니다. 이 정책은 `analysis-config.json`의 `includeTests`로 관리합니다.
+기본 분석 입력은 `Server`, `Client`, `ClientNet`, `Shared`, `Tool`의 다섯 영역입니다. `Tool`은 `99_Tools/PacketGenerator`만 포함합니다. `testMarkers`에 해당하는 TDD 단위·통합 테스트와 `headless-bot`, `BgmComposer` 등 나머지 도구는 집계하지 않습니다. 이 범위는 `analysis-config.json`의 `sourceRoots`와 `includeTests`로 관리합니다.
 
 ## 저장소 경계
 

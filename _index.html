@@ -18,6 +18,7 @@
     <nav class="tabs" aria-label="주요 화면">
       <button class="tab is-active" data-view="overview">전체 개요</button>
       <button class="tab" data-view="flow">전체 흐름</button>
+      <button class="tab" data-view="architecture">전체 구조도</button>
       <button class="tab" data-view="classes">클래스 맵</button>
       <button class="tab" data-view="explorer">구조 탐색</button>
       <button class="tab" data-view="diagnostics">SOLID 진단</button>
@@ -29,7 +30,13 @@
   </header>
 
   <div class="app-shell">
-    <aside class="sidebar">
+    <button id="sidebar-toggle" class="panel-edge-toggle sidebar-edge-toggle" aria-controls="project-explorer" aria-expanded="true" title="Project Explorer 접기">
+      <span aria-hidden="true">‹</span><span class="sr-only">Project Explorer 접기</span>
+    </button>
+    <button id="context-toggle" class="panel-edge-toggle context-edge-toggle" aria-controls="context-panel" aria-expanded="true" title="설명 패널 접기">
+      <span aria-hidden="true">›</span><span class="sr-only">설명 패널 접기</span>
+    </button>
+    <aside id="project-explorer" class="sidebar">
       <label class="search-box">
         <span>검색</span>
         <input id="search-input" type="search" placeholder="클래스, 메서드, 파일 경로">
@@ -62,8 +69,9 @@
     </div>
     <div class="guide-grid">
       <section><b>계층</b><p>왼쪽에서 레이어 → 폴더 → 타입 순서로 들어갑니다.</p></section>
-      <section><b>전체 흐름</b><p>이동, 전투, 맵 전환, 헤드리스 검증 시나리오를 책임 전달 순서로 읽습니다.</p></section>
-      <section><b>클래스 맵</b><p>클라이언트, 서버, 공유 영역의 핵심 타입과 관계를 선택 중심으로 탐색합니다.</p></section>
+      <section><b>전체 흐름</b><p>이동, 전투, 맵 전환, 패킷 생성 흐름을 책임 전달 순서로 읽습니다.</p></section>
+      <section><b>전체 구조도</b><p>주요 실행 영역, 생성 도구, 공유 계약, 신뢰 경계를 한 장의 구조도로 봅니다.</p></section>
+      <section><b>클래스 맵</b><p>Client, ClientNet, Server, Shared, Tool 영역의 핵심 타입과 관계를 선택 중심으로 탐색합니다.</p></section>
       <section><b>관계도</b><p>들어오는 관계 → 선택 타입 → 나가는 관계 순서로 단계별 탐색합니다.</p></section>
       <section><b>호출 스택</b><p>메서드의 호출 대상과 역호출자를 최대 4단계까지 펼칩니다.</p></section>
       <section><b>SOLID 신호</b><p>확정 위반이 아니라 검토할 근거입니다. 실제 책임과 변경 이유를 함께 판단하세요.</p></section>

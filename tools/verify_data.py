@@ -11,14 +11,27 @@ data = json.loads(text[len(prefix):-2])
 assert data["schemaVersion"] == "1.0", "Unsupported schema"
 assert data["summary"]["types"] > 0, "No types"
 assert data["summary"]["methods"] > 0, "No methods"
+allowed_prefixes = (
+    "02_Server/",
+    "03_Client/Assets/Scripts/",
+    "04_ClientNet/",
+    "98_Shared/",
+    "99_Tools/PacketGenerator/",
+)
+allowed_layers = {"Server", "Client", "ClientNet", "Shared", "Tool"}
 type_ids = {item["id"] for item in data["types"]}
 method_ids = {item["id"] for item in data["methods"]}
 assert len(type_ids) == len(data["types"]), "Duplicate type ids"
 assert len(method_ids) == len(data["methods"]), "Duplicate method ids"
+assert {item["name"] for item in data["projects"]} == allowed_layers, "Unexpected architecture layer"
+for item in data["types"]:
+    assert item["file"].startswith(allowed_prefixes), f"Type outside architecture scope: {item['file']}"
+    assert not item["isTest"], f"Test type included in architecture scope: {item['file']}"
 for relation in data["relations"]:
     assert relation["sourceId"] in type_ids, "Unknown relation source"
     assert relation["targetId"] in type_ids, "Unknown relation target"
 for method in data["methods"]:
+    assert method["file"].startswith(allowed_prefixes), f"Method outside architecture scope: {method['file']}"
     assert method["typeId"] in type_ids, "Unknown method owner"
     assert all(target in method_ids for target in method["calls"]), "Unknown called method"
     assert all(source in method_ids for source in method["calledBy"]), "Unknown caller"

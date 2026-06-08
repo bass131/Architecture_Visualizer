@@ -166,14 +166,11 @@ def split_params(raw: str) -> list[dict]:
 
 
 def layer_for(path: str) -> str:
-    if path.startswith("02_Server/GameServer.Tests"): return "Server Tests"
-    if path.startswith("02_Server/Network"): return "Server Network"
-    if path.startswith("02_Server"): return "Game Server"
-    if path.startswith("03_Client"): return "Unity Client"
-    if path.startswith("04_ClientNet"): return "Client Network"
+    if path.startswith("02_Server"): return "Server"
+    if path.startswith("03_Client"): return "Client"
+    if path.startswith("04_ClientNet"): return "ClientNet"
     if path.startswith("98_Shared"): return "Shared"
-    if path.startswith("99_Tools/headless-bot"): return "QA Tools"
-    if path.startswith("99_Tools"): return "Developer Tools"
+    if path.startswith("99_Tools/PacketGenerator"): return "Tool"
     return "Other"
 
 

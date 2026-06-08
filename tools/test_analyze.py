@@ -31,9 +31,12 @@ class AnalyzerUtilityTests(unittest.TestCase):
         )
 
     def test_layer_mapping_uses_specific_roots_first(self) -> None:
-        self.assertEqual("Server Tests", layer_for("02_Server/GameServer.Tests/Test.cs"))
-        self.assertEqual("Game Server", layer_for("02_Server/GameServer/Loop.cs"))
-        self.assertEqual("QA Tools", layer_for("99_Tools/headless-bot/Bot.cs"))
+        self.assertEqual("Server", layer_for("02_Server/GameServer/Loop.cs"))
+        self.assertEqual("Client", layer_for("03_Client/Assets/Scripts/Player.cs"))
+        self.assertEqual("ClientNet", layer_for("04_ClientNet/ClientSession.cs"))
+        self.assertEqual("Shared", layer_for("98_Shared/Protocol/Packet.cs"))
+        self.assertEqual("Tool", layer_for("99_Tools/PacketGenerator/Program.cs"))
+        self.assertEqual("Other", layer_for("99_Tools/headless-bot/Bot.cs"))
 
     def test_output_must_be_outside_source_tree(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -71,6 +74,41 @@ class AnalyzerUtilityTests(unittest.TestCase):
             analyzer.read_files()
             self.assertEqual(2, len(analyzer.files))
             self.assertTrue(any(item.is_test for item in analyzer.files))
+
+    def test_configured_roots_can_limit_tools_to_packet_generator(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            source = pathlib.Path(temporary)
+            paths = (
+                "02_Server/GameServer/Server.cs",
+                "03_Client/Assets/Scripts/Client.cs",
+                "04_ClientNet/ClientSession.cs",
+                "98_Shared/Protocol/Packet.cs",
+                "99_Tools/PacketGenerator/Program.cs",
+                "99_Tools/headless-bot/Bot.cs",
+                "99_Tools/BgmComposer/Composer.cs",
+            )
+            for relative in paths:
+                path = source / relative
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text("class Sample {}", encoding="utf-8")
+
+            analyzer = Analyzer(source, {
+                "sourceRoots": [
+                    "02_Server",
+                    "03_Client/Assets/Scripts",
+                    "04_ClientNet",
+                    "98_Shared",
+                    "99_Tools/PacketGenerator",
+                ],
+                "includeTests": False,
+                "testMarkers": [".Tests/", "/Tests/", "Tests.cs"],
+            })
+            analyzer.read_files()
+
+            self.assertEqual(
+                sorted(paths[:5]),
+                sorted(item.relative for item in analyzer.files),
+            )
 
 
 if __name__ == "__main__":
