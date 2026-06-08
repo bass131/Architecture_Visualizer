@@ -17,6 +17,8 @@
     </div>
     <nav class="tabs" aria-label="주요 화면">
       <button class="tab is-active" data-view="overview">전체 개요</button>
+      <button class="tab" data-view="flow">전체 흐름</button>
+      <button class="tab" data-view="classes">클래스 맵</button>
       <button class="tab" data-view="explorer">구조 탐색</button>
       <button class="tab" data-view="diagnostics">SOLID 진단</button>
       <button class="tab" data-view="calls">호출 탐색</button>
@@ -34,7 +36,6 @@
         <kbd>/</kbd>
       </label>
       <div class="filter-row">
-        <label><input id="show-tests" type="checkbox"> 테스트</label>
         <label><input id="show-generated" type="checkbox"> 생성 코드</label>
       </div>
       <div id="tree-summary" class="tree-summary"></div>
@@ -61,7 +62,9 @@
     </div>
     <div class="guide-grid">
       <section><b>계층</b><p>왼쪽에서 레이어 → 폴더 → 타입 순서로 들어갑니다.</p></section>
-      <section><b>관계도</b><p>선택 타입 중심으로 상속, 구현, 사용, 생성, 호출 관계를 표시합니다.</p></section>
+      <section><b>전체 흐름</b><p>이동, 전투, 맵 전환, 헤드리스 검증 시나리오를 책임 전달 순서로 읽습니다.</p></section>
+      <section><b>클래스 맵</b><p>클라이언트, 서버, 공유 영역의 핵심 타입과 관계를 선택 중심으로 탐색합니다.</p></section>
+      <section><b>관계도</b><p>들어오는 관계 → 선택 타입 → 나가는 관계 순서로 단계별 탐색합니다.</p></section>
       <section><b>호출 스택</b><p>메서드의 호출 대상과 역호출자를 최대 4단계까지 펼칩니다.</p></section>
       <section><b>SOLID 신호</b><p>확정 위반이 아니라 검토할 근거입니다. 실제 책임과 변경 이유를 함께 판단하세요.</p></section>
     </div>

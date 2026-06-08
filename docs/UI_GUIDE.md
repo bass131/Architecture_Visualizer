@@ -32,6 +32,12 @@ Use color as a secondary signal. Labels, relation names, and severity text must 
 - Chips and badges represent filters, relation kinds, patterns, or severity.
 - High and medium diagnostic styles indicate review priority, never pass/fail status.
 - Graph edges and nodes require textual alternatives in adjacent lists or context panels.
+- Architecture flow views should present an explicit left-to-right stage order with scenario and step selection.
+- End-to-end diagrams should use curated runtime scenarios rather than raw reference counts, with swimlanes and orthogonal connectors showing responsibility handoffs.
+- Flow animation may indicate sequence only; it must not imply runtime duration or frequency and must honor reduced-motion preferences.
+- Local relationship views should paginate dense neighborhoods instead of overlapping nodes or labels.
+- Area class diagrams should cap visible types, prioritize the selected type's neighborhood, and draw connectors behind opaque class cards.
+- Connector labels need their own background and spacing channel so they do not overlap nodes or lane headings.
 - Empty states explain what action produces content.
 
 ## Interaction

@@ -4,6 +4,7 @@ import tempfile
 import unittest
 
 from analyze import (
+    Analyzer,
     clean_type,
     ensure_output_outside_source,
     layer_for,
@@ -43,6 +44,33 @@ class AnalyzerUtilityTests(unittest.TestCase):
             ensure_output_outside_source(source, root / "atlas" / "data.js")
             with self.assertRaises(ValueError):
                 ensure_output_outside_source(source, source / "data" / "data.js")
+
+    def test_test_files_can_be_excluded_from_analysis_input(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            source = root / "source"
+            production = source / "Game"
+            tests = source / "Game.Tests"
+            production.mkdir(parents=True)
+            tests.mkdir(parents=True)
+            (production / "Player.cs").write_text("class Player {}", encoding="utf-8")
+            (tests / "PlayerTests.cs").write_text("class PlayerTests {}", encoding="utf-8")
+            config = {
+                "sourceRoots": ["Game", "Game.Tests"],
+                "testMarkers": [".Tests/", "Tests.cs"],
+                "includeTests": False,
+            }
+
+            analyzer = Analyzer(source, config)
+            analyzer.read_files()
+
+            self.assertEqual(["Game/Player.cs"], [item.relative for item in analyzer.files])
+
+            config["includeTests"] = True
+            analyzer = Analyzer(source, config)
+            analyzer.read_files()
+            self.assertEqual(2, len(analyzer.files))
+            self.assertTrue(any(item.is_test for item in analyzer.files))
 
 
 if __name__ == "__main__":

@@ -259,6 +259,7 @@ class Analyzer:
 
     def read_files(self) -> None:
         excludes = tuple(self.config.get("excludeSegments", []))
+        include_tests = self.config.get("includeTests", True)
         test_markers = tuple(self.config.get("testMarkers", []))
         generated_markers = tuple(self.config.get("generatedMarkers", []))
         for configured in self.config.get("sourceRoots", []):
@@ -270,6 +271,9 @@ class Analyzer:
                 searchable = f"/{relative}/"
                 if any(segment.lower() in searchable.lower() for segment in excludes):
                     continue
+                is_test = any(marker.lower() in relative.lower() for marker in test_markers)
+                if is_test and not include_tests:
+                    continue
                 source = path.read_text(encoding="utf-8-sig", errors="replace")
                 self.files.append(SourceFile(
                     path=path,
@@ -277,7 +281,7 @@ class Analyzer:
                     source=source,
                     masked=mask_non_code(source),
                     newlines=[match.start() for match in re.finditer("\n", source)],
-                    is_test=any(marker.lower() in relative.lower() for marker in test_markers),
+                    is_test=is_test,
                     is_generated=any(marker.lower() in relative.lower() for marker in generated_markers),
                 ))
 

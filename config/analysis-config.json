@@ -13,6 +13,7 @@
     "/PackageCache/",
     "/Temp/"
   ],
+  "includeTests": false,
   "testMarkers": [
     ".Tests/",
     "/Tests/",
