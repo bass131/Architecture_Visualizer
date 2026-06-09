@@ -94,6 +94,7 @@ def main() -> int:
     assert 'assets/vendor/mermaid.min.js' in index and "function renderSourceMermaidDiagrams" in app, "Source UML diagrams must use the vendored Mermaid engine offline"
     assert ".source-uml-mermaid-svg" in styles and "window.mermaid.render" in app, "Source UML Mermaid output must render in-page"
     assert 'data-source-uml-view="read"' in app and 'data-source-uml-view="fit"' in app, "Source UML must provide readable and fit-to-card modes"
+    assert 'state.sourceUmlViewModes[diagram.id] || "fit"' in app, "Source UML must default to fit-to-card mode"
     assert "function sourceUmlPreferredDirection" in app and "data-source-uml-direction" in app, "Source UML must support adaptive and manual layout direction"
     assert ".source-uml-render.is-read" in styles and ".source-uml-render.is-fit" in styles, "Source UML view modes must preserve readable sizing and optional fitting"
     assert ".mermaid-code" in styles and "data-copy-source-uml" in app and "class=\"mermaid-details\"" in app, "Source UML Mermaid blocks must be readable, copyable, and collapsed by default"
