@@ -34,7 +34,8 @@ def main() -> int:
     index = (ROOT / "_index.html").read_text(encoding="utf-8")
     assert 'src="data/architecture-data.js' in index, "Generated dataset is not loaded by _index.html"
     assert 'src="assets/app.js' in index, "Application script is not loaded by _index.html"
-    assert "mobile-layout-20260609" in index, "Mobile layout assets must use the current cache-busting version"
+    assert "mobile-layout-20260609" in index, "Mobile layout styles must use the current cache-busting version"
+    assert 'assets/app.js?v=source-uml-fit-20260609' in index, "Application script must invalidate caches after the UML default-view change"
     assert 'data-view="flow"' in index, "End-to-end architecture flow is not discoverable from _index.html"
     assert 'data-view="architecture"' in index, "High-level architecture overview is not discoverable from _index.html"
     assert 'data-view="classes"' in index, "Area class diagrams are not discoverable from _index.html"
