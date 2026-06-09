@@ -21,24 +21,24 @@
   }
 
   const typeById = new Map(data.types.map(item => [item.id, item]));
-  const methodById = new Map(data.methods.map(item => [item.id, item]));
   const methodsByType = groupBy(data.methods, item => item.typeId);
   const diagnosticsByType = groupBy(data.diagnostics, item => item.typeId);
   const outgoingByType = groupBy(data.relations, item => item.sourceId);
   const incomingByType = groupBy(data.relations, item => item.targetId);
   const flowScenarios = createFlowScenarios();
   const classAreas = createClassAreas();
-  const viewNames = new Set(["overview", "flow", "architecture", "classes", "source-uml", "explorer", "diagnostics", "calls"]);
+  const viewNames = new Set(["overview", "flow", "architecture", "classes", "source-uml", "explorer", "diagnostics"]);
   const state = {
     view: initialView(),
     selectedTypeId: pickInitialType(),
-    selectedMethodId: null,
     search: "",
     diagnosticSeverity: "all",
     diagnosticPrinciple: "all",
     diagnosticTypeId: null,
     diagnosticCopyStatus: null,
     sourceUmlCopyStatus: null,
+    sourceUmlViewModes: {},
+    sourceUmlDirections: {},
     architectureCopyStatus: null,
     sidebarCollapsed: readPanelPreference("atlas.sidebarCollapsed"),
     contextCollapsed: readPanelPreference("atlas.contextCollapsed"),
@@ -52,7 +52,6 @@
     classArea: "client",
     classSelectedTypeId: null,
     classRelationKind: "all",
-    classLimit: 16,
     classZoom: 1,
     localRelationKind: "all",
     localRelationPage: 0,
@@ -142,11 +141,6 @@
       selectType(typeTarget.dataset.typeId);
       return;
     }
-    const methodTarget = event.target.closest("[data-method-id]");
-    if (methodTarget) {
-      selectMethod(methodTarget.dataset.methodId);
-      return;
-    }
     const layerTarget = event.target.closest("[data-layer]");
     if (layerTarget) {
       state.layerFilter = layerTarget.dataset.layer;
@@ -194,6 +188,18 @@
     const copySourceUmlTarget = event.target.closest("[data-copy-source-uml]");
     if (copySourceUmlTarget) {
       copySourceUml(copySourceUmlTarget.dataset.copySourceUml);
+      render();
+      return;
+    }
+    const sourceUmlViewTarget = event.target.closest("[data-source-uml-view]");
+    if (sourceUmlViewTarget) {
+      state.sourceUmlViewModes[sourceUmlViewTarget.dataset.sourceUmlId] = sourceUmlViewTarget.dataset.sourceUmlView;
+      render();
+      return;
+    }
+    const sourceUmlDirectionTarget = event.target.closest("[data-source-uml-direction]");
+    if (sourceUmlDirectionTarget) {
+      state.sourceUmlDirections[sourceUmlDirectionTarget.dataset.sourceUmlId] = sourceUmlDirectionTarget.dataset.sourceUmlDirection;
       render();
       return;
     }
@@ -251,12 +257,6 @@
     const classKindTarget = event.target.closest("[data-class-kind]");
     if (classKindTarget) {
       state.classRelationKind = classKindTarget.dataset.classKind;
-      render();
-      return;
-    }
-    const classLimitTarget = event.target.closest("[data-class-limit]");
-    if (classLimitTarget) {
-      state.classLimit = Number(classLimitTarget.dataset.classLimit);
       render();
       return;
     }
@@ -337,28 +337,12 @@
   function selectType(typeId) {
     if (!typeById.has(typeId)) return;
     state.selectedTypeId = typeId;
-    const typeMethods = methodsByType.get(typeId) || [];
-    if (!typeMethods.some(method => method.id === state.selectedMethodId)) {
-      state.selectedMethodId = typeMethods[0]?.id || null;
-    }
     state.view = "explorer";
     history.replaceState(null, "", "#explorer");
     syncTabs();
     renderTree();
     render();
     main.focus({ preventScroll: true });
-  }
-
-  function selectMethod(methodId) {
-    const method = methodById.get(methodId);
-    if (!method) return;
-    state.selectedMethodId = methodId;
-    state.selectedTypeId = method.typeId;
-    state.view = "calls";
-    history.replaceState(null, "", "#calls");
-    syncTabs();
-    renderTree();
-    render();
   }
 
   function render() {
@@ -368,7 +352,6 @@
     else if (state.view === "classes") renderClasses();
     else if (state.view === "source-uml") renderSourceUml();
     else if (state.view === "diagnostics") renderDiagnostics();
-    else if (state.view === "calls") renderCalls();
     else renderExplorer();
     renderContext();
   }
@@ -490,10 +473,11 @@
           ${model.channels.map(channel => `<div class="architecture-intent-item ${attr(channel.tone)}"><span>${channel.number}</span><div><b>${escapeHtml(channel.title)}</b><small>${escapeHtml(channel.detail)}</small></div></div>`).join("")}
         </div>
       </section>
-      <section class="panel">
-        <div class="panel-header"><h2>구조도 원문</h2><button class="ghost-button" data-copy-architecture>${escapeHtml(copyLabel)}</button></div>
+      <details class="panel architecture-source-details">
+        <summary><span><span class="eyebrow">MERMAID SOURCE</span><b>구조도 원문</b></span><span class="architecture-source-summary">열어서 보기</span></summary>
+        <div class="architecture-source-actions"><p>외부 문서나 PR 설명에 사용할 수 있는 Mermaid flowchart 원문입니다.</p><button class="ghost-button" data-copy-architecture>${escapeHtml(copyLabel)}</button></div>
         <pre class="architecture-source"><code>${escapeHtml(source)}</code></pre>
-      </section>`;
+      </details>`;
   }
 
   function renderFlow() {
@@ -548,18 +532,25 @@
     const usedLanes = scenario.lanes.filter(lane => usedLaneIds.has(lane.id))
       .map((lane, index) => ({ ...lane, y: 56 + index * 142, height: 126 }));
     const laneY = new Map(usedLanes.map(lane => [lane.id, lane.y]));
-    const nodeWidth = 148;
-    const nodeHeight = 64;
-    const layoutNodes = scenario.nodes.map((node, index) => ({ ...node, x: 190 + index * 220, y: laneY.get(node.laneId) + 42 }));
+    const isGenerationLayout = scenario.layout === "generation";
+    const nodeWidth = isGenerationLayout ? 190 : 148;
+    const nodeHeight = isGenerationLayout ? 72 : 64;
+    const layoutNodes = scenario.nodes.map((node, index) => ({
+      ...node,
+      x: isGenerationLayout ? node.x : 190 + index * 238,
+      y: laneY.get(node.laneId) + (isGenerationLayout ? 36 : 42),
+    }));
     const nodeById = new Map(layoutNodes.map(node => [node.id, node]));
     const diagramHeight = Math.max(...usedLanes.map(lane => lane.y + lane.height)) + 18;
     const diagramWidth = Math.max(1260, layoutNodes.at(-1).x + nodeWidth + 38);
     const paths = scenario.edges.map((edge, index) => {
       const source = nodeById.get(edge.from);
       const target = nodeById.get(edge.to);
-      const route = orthogonalPath(source, target, nodeWidth, nodeHeight);
       const edgeLabel = flowEdgeLabel(edge.label);
-      const labelWidth = Math.max(48, edgeLabel.length * 7 + 18);
+      const labelWidth = Math.max(48, Math.ceil(measureSvgText(edgeLabel, 9)) + 18);
+      const route = isGenerationLayout
+        ? generationFlowPath(edge, source, target, nodeWidth, nodeHeight, labelWidth)
+        : orthogonalPath(source, target, nodeWidth, nodeHeight);
       return `<g class="diagram-connector ${attr(edge.tone || "data")}">
         <path d="${route.path}" marker-end="url(#arrow-${attr(edge.tone || "data")})"></path>
         <rect class="connector-label-bg" x="${route.labelX - labelWidth / 2}" y="${route.labelY - 10}" width="${labelWidth}" height="16" rx="4"></rect>
@@ -574,11 +565,14 @@
       </defs>
       <rect class="diagram-grid-bg" width="100%" height="100%"></rect>
       <text class="diagram-stage-heading" x="22" y="30">RESPONSIBILITY</text>
-      ${layoutNodes.map((node, index) => `<g class="diagram-stage-marker ${node.id === selectedNodeId ? "is-selected" : ""}" transform="translate(${node.x + nodeWidth / 2} 24)"><circle r="11"></circle><text y="4">${index + 1}</text></g>`).join("")}
+      ${scenario.phases
+        ? scenario.phases.map(phase => `<g class="diagram-phase" transform="translate(${phase.x} 16)"><line x1="0" y1="18" x2="${phase.width}" y2="18"></line><text x="${phase.width / 2}" y="8">${escapeHtml(phase.title)}</text></g>`).join("")
+        : layoutNodes.map((node, index) => `<g class="diagram-stage-marker ${node.id === selectedNodeId ? "is-selected" : ""}" transform="translate(${node.x + nodeWidth / 2} 24)"><circle r="11"></circle><text y="4">${index + 1}</text></g>`).join("")}
       ${usedLanes.map(lane => `<g class="diagram-lane ${attr(lane.id)}"><rect x="8" y="${lane.y}" width="${diagramWidth - 16}" height="${lane.height}"></rect><line x1="152" y1="${lane.y}" x2="152" y2="${lane.y + lane.height}"></line><text x="22" y="${lane.y + 28}">${escapeHtml(lane.title)}</text><text class="lane-caption" x="22" y="${lane.y + 48}">${escapeHtml(lane.caption)}</text></g>`).join("")}
       ${paths}
       ${layoutNodes.map((node, index) => `<g class="diagram-node ${node.id === selectedNodeId ? "is-selected" : ""} ${attr(node.tone || "data")}" data-flow-node="${attr(node.id)}" tabindex="0" role="button" aria-label="${index + 1}. ${attr(node.title)}" transform="translate(${node.x} ${node.y})">
-        <rect width="${nodeWidth}" height="${nodeHeight}"></rect><circle cx="16" cy="16" r="10"></circle><text class="node-order" x="16" y="20">${index + 1}</text><text class="node-title" x="32" y="24">${escapeHtml(node.title)}</text><text class="node-subtitle" x="14" y="45">${escapeHtml(node.subtitle)}</text><text class="node-layer" x="14" y="58">${escapeHtml(node.layer)}</text>
+        <title>${escapeHtml(`${node.title} · ${node.subtitle} · ${node.layer}`)}</title>
+        <rect width="${nodeWidth}" height="${nodeHeight}"></rect><circle cx="16" cy="16" r="10"></circle><text class="node-order" x="16" y="20">${index + 1}</text><text class="node-title" x="32" y="24">${escapeHtml(fitSvgText(node.title, nodeWidth - 42, 12))}</text><text class="node-subtitle" x="14" y="${isGenerationLayout ? 48 : 45}">${escapeHtml(fitSvgText(node.subtitle, nodeWidth - 28, 10))}</text><text class="node-layer" x="14" y="${isGenerationLayout ? 64 : 58}">${escapeHtml(fitSvgText(node.layer, nodeWidth - 28, 9))}</text>
       </g>`).join("")}
     </svg>`;
   }
@@ -594,6 +588,57 @@
       labelX: middleX,
       labelY: source.y === target.y ? source.y - 12 : (startY + endY) / 2,
     };
+  }
+
+  function generationFlowPath(edge, source, target, nodeWidth, nodeHeight, labelWidth) {
+    const startX = source.x + nodeWidth;
+    const startY = source.y + nodeHeight / 2;
+    const targetOffsets = { "gen-packets": -18, "server-manager": 0, "client-manager": 18 };
+    const endX = target.x;
+    const endY = target.y + nodeHeight / 2 + (edge.to === "runtime-contract" ? (targetOffsets[edge.from] || 0) : 0);
+    const branchIndex = { "gen-packets": 0, "server-manager": 1, "client-manager": 2 }[edge.to];
+    const mergeIndex = { "gen-packets": 0, "server-manager": 1, "client-manager": 2 }[edge.from];
+    const middleX = branchIndex !== undefined
+      ? startX + 34 + branchIndex * 38
+      : mergeIndex !== undefined
+        ? startX + 128 + mergeIndex * 24
+        : (startX + endX) / 2;
+    const labelX = branchIndex !== undefined
+      ? middleX
+      : mergeIndex !== undefined
+        ? startX + labelWidth / 2 + 14
+        : (startX + endX) / 2;
+    const labelY = branchIndex !== undefined
+      ? (startY + endY) / 2
+      : mergeIndex !== undefined
+        ? startY - 10
+        : endY - 8;
+    return {
+      path: `M ${startX} ${startY} H ${middleX} V ${endY} H ${endX}`,
+      labelX,
+      labelY,
+    };
+  }
+
+  function fitSvgText(value, maxWidth, fontSize) {
+    const text = String(value || "");
+    if (measureSvgText(text, fontSize) <= maxWidth) return text;
+    const ellipsis = "…";
+    let fitted = "";
+    for (const character of text) {
+      if (measureSvgText(fitted + character + ellipsis, fontSize) > maxWidth) break;
+      fitted += character;
+    }
+    return `${fitted.trimEnd()}${ellipsis}`;
+  }
+
+  function measureSvgText(value, fontSize) {
+    return [...String(value || "")].reduce((width, character) => {
+      if (/\s/.test(character)) return width + fontSize * .34;
+      if (/[\u1100-\u11ff\u2e80-\u9fff\uac00-\ud7af]/.test(character)) return width + fontSize;
+      if (/[A-Z0-9]/.test(character)) return width + fontSize * .66;
+      return width + fontSize * .56;
+    }, 0);
   }
 
   function flowEdgeLabel(label) {
@@ -769,18 +814,15 @@
     const ranked = [...areaTypes].sort((a, b) => classTypeScore(b) - classTypeScore(a) || a.name.localeCompare(b.name));
     if (!state.classSelectedTypeId || !areaIds.has(state.classSelectedTypeId)) state.classSelectedTypeId = ranked[0]?.id || null;
     const selected = typeById.get(state.classSelectedTypeId);
-    const visibleTypes = selectClassDiagramTypes(selected, ranked, relations, state.classLimit);
-    const visibleIds = new Set(visibleTypes.map(type => type.id));
-    const visibleRelations = relations.filter(relation => visibleIds.has(relation.sourceId) && visibleIds.has(relation.targetId))
-      .sort((a, b) => classRelationPriority(b, selected?.id) - classRelationPriority(a, selected?.id))
-      .slice(0, 42)
-      .sort((a, b) => classRelationPriority(a, selected?.id) - classRelationPriority(b, selected?.id));
     const kinds = relationKinds(allRelations);
-    const selectedRelations = relations.filter(relation => relation.sourceId === selected?.id || relation.targetId === selected?.id);
+    const selectedRelations = relations
+      .filter(relation => relation.sourceId === selected?.id || relation.targetId === selected?.id)
+      .sort((a, b) => classRelationKindOrder(a.kind) - classRelationKindOrder(b.kind)
+        || classRelationOtherName(a, selected?.id).localeCompare(classRelationOtherName(b, selected?.id)));
 
     main.innerHTML = `
       <header class="page-header">
-        <div><span class="eyebrow">CLASS DIAGRAM</span><h1>영역별 클래스 맵</h1><p class="subtitle">네임스페이스를 UML 패키지처럼 묶고 패키지 사이 의존성만 점선으로 표시합니다. 선택 타입이 포함된 패키지와 직접 관계가 있는 패키지를 우선 강조합니다.</p></div>
+        <div><span class="eyebrow">CLASS DIAGRAM</span><h1>영역별 클래스 맵</h1><p class="subtitle">선택한 타입을 중심으로 바로 연결된 클래스만 표시합니다. 들어오는 관계와 나가는 관계를 분리하고, 관계 유형별 직교 배선으로 흐름을 정리합니다.</p></div>
         <div class="source-ref">${areaTypes.length} types · ${allRelations.length} internal relations</div>
       </header>
       <div class="class-toolbar">
@@ -789,7 +831,6 @@
         </div>
         <div class="diagram-actions">
           <div class="zoom-controls" aria-label="클래스 다이어그램 확대 축소"><button class="ghost-button" data-class-zoom="-.1" aria-label="축소">−</button><span>${Math.round(state.classZoom * 100)}%</span><button class="ghost-button" data-class-zoom=".1" aria-label="확대">+</button></div>
-          <div class="class-limit-controls" aria-label="표시 타입 개수">${[12, 16, 20].map(limit => `<button class="chip ${state.classLimit === limit ? "is-active" : ""}" data-class-limit="${limit}">${limit}개</button>`).join("")}</div>
         </div>
       </div>
       <div class="class-kind-toolbar" aria-label="클래스 관계 종류">
@@ -798,7 +839,7 @@
       </div>
       <section class="panel diagram-panel">
         <div class="diagram-heading"><div><span class="eyebrow">${escapeHtml(area.kicker)}</span><h2>${escapeHtml(area.title)}</h2></div><p>${escapeHtml(area.description)}</p></div>
-        <div class="diagram-scroll">${renderClassDiagram(visibleTypes, visibleRelations, selected?.id, state.classZoom)}</div>
+        <div class="diagram-scroll">${renderClassDiagram(selected, selectedRelations, state.classZoom)}</div>
       </section>
       <div class="flow-detail-grid">
         <section class="panel selected-step-panel">
@@ -807,220 +848,142 @@
         </section>
         <section class="panel">
           <div class="panel-header"><h2>선택 타입 관계</h2><span class="muted">${selectedRelations.length} relations</span></div>
-          <div class="class-relation-list">${selectedRelations.slice(0, 16).map(relation => classRelationItem(relation, selected.id)).join("") || empty("선택한 조건의 직접 관계가 없습니다.")}</div>
+          <div class="class-relation-groups">${renderClassRelationGroups(selectedRelations, selected?.id)}</div>
         </section>
       </div>`;
   }
 
-  function renderClassDiagram(types, relations, selectedTypeId, zoom) {
-    const layout = buildClassPackageLayout(types, relations, selectedTypeId);
-    const { packages, packageRelations, width, height } = layout;
-    const edges = packageRelations.map((relation, index) => {
-      const source = packages.find(item => item.id === relation.sourcePackageId);
-      const target = packages.find(item => item.id === relation.targetPackageId);
-      if (!source || !target) return "";
-      const path = classPackageEdgePath(source, target, index);
-      const focusClass = relation.isFocused ? "is-focused" : "";
-      return `<g class="class-package-edge ${attr(relation.primaryKind)} ${focusClass}">
-        <path d="${path}" marker-end="url(#class-arrow-${attr(relation.primaryKind)})"></path>
-        <text x="${relation.labelX}" y="${relation.labelY}">${relation.count}</text>
-      </g>`;
-    }).join("");
-    return `<svg class="class-diagram" style="width:${Math.round(width * zoom)}px" viewBox="0 0 ${width} ${height}" role="group" aria-label="영역별 클래스 다이어그램">
+  function renderClassDiagram(selected, relations, zoom) {
+    if (!selected) return empty("표시할 타입이 없습니다.");
+    const layout = buildLocalClassLayout(selected, relations);
+    const { nodes, bundles, width, height } = layout;
+    return `<svg class="class-diagram" style="width:${Math.round(width * zoom)}px" viewBox="0 0 ${width} ${height}" role="group" aria-label="${attr(selected.name)} 직접 관계 클래스 다이어그램">
       <defs>
         <pattern id="class-grid" width="20" height="20" patternUnits="userSpaceOnUse"><path d="M 20 0 L 0 0 0 20" class="diagram-grid-line"></path></pattern>
-        ${["inherits", "implements", "uses", "creates", "calls"].map(kind => `<marker id="class-arrow-${kind}" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6"></polygon></marker>`).join("")}
+        ${["inherits", "implements", "uses", "creates", "calls"].map(kind => `<marker id="class-arrow-${kind}" markerWidth="9" markerHeight="8" refX="8" refY="4" orient="auto"><path d="M 0 0 L 8 4 L 0 8 Z"></path></marker>`).join("")}
       </defs>
       <rect class="diagram-grid-bg" width="100%" height="100%"></rect>
-      <g class="class-edges">${edges}</g>
-      ${packages.map(item => classPackageNode(item, selectedTypeId)).join("")}
+      <text class="class-column-heading" x="48" y="34">INCOMING</text>
+      <text class="class-column-heading center" x="${width / 2}" y="34">SELECTED TYPE</text>
+      <text class="class-column-heading end" x="${width - 48}" y="34">OUTGOING</text>
+      <g class="class-edges">${bundles.map(classRelationBundle).join("")}</g>
+      ${nodes.map(classTypeNode).join("")}
     </svg>`;
   }
 
-  function buildClassPackageLayout(types, relations, selectedTypeId) {
-    const packages = buildClassPackages(types);
-    const packageByTypeId = new Map(packages.flatMap(item => item.types.map(type => [type.id, item.id])));
-    const packageRelations = aggregatePackageRelations(relations, packageByTypeId, selectedTypeId);
-    const selectedPackageId = packageByTypeId.get(selectedTypeId);
-    packages.forEach(item => {
-      item.isSelected = item.id === selectedPackageId;
-      item.isFocused = item.isSelected || packageRelations.some(relation => relation.isFocused && (relation.sourcePackageId === item.id || relation.targetPackageId === item.id));
-      item.internalRelationCount = relations.filter(relation => packageByTypeId.get(relation.sourceId) === item.id && packageByTypeId.get(relation.targetId) === item.id).length;
-    });
-    packages.sort((a, b) => Number(b.isSelected) - Number(a.isSelected)
-      || Number(b.isFocused) - Number(a.isFocused)
-      || b.score - a.score
-      || a.name.localeCompare(b.name));
-
-    const packageWidth = 286, gapX = 84, gapY = 82, marginX = 54, marginY = 48, columns = 3;
-    const rows = Math.max(1, Math.ceil(packages.length / columns));
-    const rowHeights = Array.from({ length: rows }, (_, row) =>
-      Math.max(...packages.slice(row * columns, row * columns + columns).map(item => item.height), 214));
-    const rowY = rowHeights.reduce((positions, height, row) => {
-      positions.push(row ? positions[row - 1] + rowHeights[row - 1] + gapY : marginY);
-      return positions;
-    }, []);
-    packages.forEach((item, index) => {
-      const row = Math.floor(index / columns);
-      const column = index % columns;
-      item.x = marginX + column * (packageWidth + gapX);
-      item.y = rowY[row];
-      item.width = packageWidth;
-      item.row = row;
-      item.column = column;
-    });
-    const width = marginX * 2 + columns * packageWidth + (columns - 1) * gapX;
-    const height = marginY + rowY.at(-1) + rowHeights.at(-1);
-    packageRelations.forEach((relation, index) => {
-      const source = packages.find(item => item.id === relation.sourcePackageId);
-      const target = packages.find(item => item.id === relation.targetPackageId);
-      if (!source || !target) return;
-      const sourceCenterY = source.y + source.height / 2;
-      const targetCenterY = target.y + target.height / 2;
-      relation.labelX = (source.x + target.x + packageWidth) / 2 + ((index % 3) - 1) * 16;
-      relation.labelY = source.row === target.row
-        ? (sourceCenterY + targetCenterY) / 2 - 8
-        : Math.min(source.y, target.y) + Math.abs(source.y - target.y) / 2 + 8;
-    });
-    return { packages, packageRelations, width, height };
-  }
-
-  function buildClassPackages(types) {
-    const groups = groupBy(types, classPackageKey);
-    return [...groups.entries()].map(([name, packageTypes]) => {
-      const sortedTypes = [...packageTypes].sort(compareClassTypes);
-      const typeGroups = [
-        { key: "interface", label: "interface", types: sortedTypes.filter(type => type.kind === "interface") },
-        { key: "class", label: "class / record", types: sortedTypes.filter(type => ["class", "record"].includes(type.kind)) },
-        { key: "value", label: "struct / enum", types: sortedTypes.filter(type => ["struct", "record-struct", "enum"].includes(type.kind)) },
-        { key: "other", label: "other", types: sortedTypes.filter(type => !["interface", "class", "record", "struct", "record-struct", "enum"].includes(type.kind)) },
-      ].filter(group => group.types.length);
-      const visibleRows = typeGroups.reduce((count, group) => count + 1 + Math.min(group.types.length, 4), 0);
-      return {
-        id: `pkg:${name}`,
-        name,
-        types: sortedTypes,
-        typeGroups,
-        score: sortedTypes.reduce((sum, type) => sum + classTypeScore(type), 0),
-        height: Math.max(214, 78 + visibleRows * 17),
-      };
-    });
-  }
-
-  function classPackageKey(type) {
-    return type.namespace || type.folder || type.layer || "Unknown";
-  }
-
-  function aggregatePackageRelations(relations, packageByTypeId, selectedTypeId) {
-    const selectedPackageId = packageByTypeId.get(selectedTypeId);
-    const grouped = new Map();
-    relations.forEach(relation => {
-      const sourcePackageId = packageByTypeId.get(relation.sourceId);
-      const targetPackageId = packageByTypeId.get(relation.targetId);
-      if (!sourcePackageId || !targetPackageId || sourcePackageId === targetPackageId) return;
-      const key = `${sourcePackageId}->${targetPackageId}`;
-      const item = grouped.get(key) || {
-        sourcePackageId,
-        targetPackageId,
-        count: 0,
-        kindCounts: new Map(),
-        isFocused: false,
-      };
-      item.count += 1;
-      item.kindCounts.set(relation.kind, (item.kindCounts.get(relation.kind) || 0) + 1);
-      item.isFocused ||= relation.sourceId === selectedTypeId || relation.targetId === selectedTypeId || sourcePackageId === selectedPackageId || targetPackageId === selectedPackageId;
-      grouped.set(key, item);
-    });
-    return [...grouped.values()]
-      .sort((a, b) => Number(b.isFocused) - Number(a.isFocused) || b.count - a.count || a.sourcePackageId.localeCompare(b.sourcePackageId) || a.targetPackageId.localeCompare(b.targetPackageId))
-      .slice(0, 32)
-      .map(item => ({
-        ...item,
-        primaryKind: [...item.kindCounts.entries()].sort((a, b) => b[1] - a[1] || classRelationKindOrder(a[0]) - classRelationKindOrder(b[0]))[0]?.[0] || "uses",
-      }));
+  function buildLocalClassLayout(selected, relations) {
+    const width = 1220, nodeWidth = 250, nodeHeight = 66, gapY = 20, top = 66;
+    const incoming = classRelationNodes(relations, selected.id, "in");
+    const outgoing = classRelationNodes(relations, selected.id, "out");
+    const rows = Math.max(incoming.length, outgoing.length, 1);
+    const height = Math.max(300, top + rows * (nodeHeight + gapY) + 26);
+    const selectedNode = { type: selected, x: (width - nodeWidth) / 2, y: (height - nodeHeight) / 2, width: nodeWidth, height: nodeHeight, selected: true };
+    const place = (items, x) => items.map((item, index) => ({ ...item, x, y: top + index * (nodeHeight + gapY), width: nodeWidth, height: nodeHeight }));
+    const incomingNodes = place(incoming, 48);
+    const outgoingNodes = place(outgoing, width - nodeWidth - 48);
+    const nodeByKey = new Map([...incomingNodes, ...outgoingNodes].map(node => [`${node.direction}:${node.type.id}`, node]));
+    const bundles = buildClassRelationBundles(relations, selected, selectedNode, nodeByKey);
+    return { nodes: [...incomingNodes, selectedNode, ...outgoingNodes], bundles, width, height };
   }
 
   function classRelationKindOrder(kind) {
     return ({ inherits: 0, implements: 1, creates: 2, calls: 3, uses: 4 }[kind] ?? 9);
   }
 
-  function compareClassTypes(a, b) {
-    return typeKindOrder(a.kind) - typeKindOrder(b.kind)
-      || a.name.localeCompare(b.name);
+  function classRelationNodes(relations, selectedTypeId, direction) {
+    const grouped = new Map();
+    relations.filter(relation => direction === "in" ? relation.targetId === selectedTypeId : relation.sourceId === selectedTypeId).forEach(relation => {
+      const otherId = direction === "in" ? relation.sourceId : relation.targetId;
+      const item = grouped.get(otherId) || { type: typeById.get(otherId), direction, kinds: new Set() };
+      item.kinds.add(relation.kind);
+      grouped.set(otherId, item);
+    });
+    return [...grouped.values()].filter(item => item.type).sort((a, b) =>
+      Math.min(...[...a.kinds].map(classRelationKindOrder)) - Math.min(...[...b.kinds].map(classRelationKindOrder))
+      || a.type.name.localeCompare(b.type.name));
   }
 
-  function classPackageNode(item, selectedTypeId) {
-    let cursorY = 64;
-    const typeRows = item.typeGroups.map(group => {
-      const heading = `<text class="class-package-kind" x="14" y="${cursorY}">${escapeHtml(group.label)} · ${group.types.length}</text>`;
-      cursorY += 17;
-      const rows = group.types.slice(0, 4).map(type => {
-        const selected = type.id === selectedTypeId;
-        const row = `<g class="class-package-type ${selected ? "is-selected" : ""} ${attr(type.kind)}" data-class-type-id="${attr(type.id)}" tabindex="0" role="button" aria-label="${attr(type.name)}">
-          <rect x="12" y="${cursorY - 12}" width="${item.width - 24}" height="15" rx="3"></rect>
-          <text x="20" y="${cursorY}">${escapeHtml(truncate(type.name, 28))}</text>
-          <text class="class-package-type-meta" x="${item.width - 18}" y="${cursorY}">${type.fanIn}/${type.fanOut}</text>
-        </g>`;
-        cursorY += 17;
-        return row;
-      }).join("");
-      if (group.types.length > 4) cursorY += 4;
-      const more = group.types.length > 4 ? `<text class="class-package-more" x="20" y="${cursorY - 2}">+ ${group.types.length - 4} more</text>` : "";
-      return heading + rows + more;
+  function buildClassRelationBundles(relations, selected, selectedNode, nodeByKey) {
+    const groups = groupBy(relations, relation => `${relation.targetId === selected.id ? "in" : "out"}:${relation.kind}`);
+    return [...groups.entries()].map(([key, items]) => {
+      const [direction, kind] = key.split(":");
+      const kindIndex = classRelationKindOrder(kind);
+      const busX = direction === "in"
+        ? selectedNode.x - 38 - kindIndex * 24
+        : selectedNode.x + selectedNode.width + 38 + kindIndex * 24;
+      const selectedY = selectedNode.y + 20 + kindIndex * 7;
+      const branches = items.map(relation => {
+        const otherId = direction === "in" ? relation.sourceId : relation.targetId;
+        const node = nodeByKey.get(`${direction}:${otherId}`);
+        if (!node) return null;
+        const kinds = [...node.kinds].sort((a, b) => classRelationKindOrder(a) - classRelationKindOrder(b));
+        const portOffset = (kinds.indexOf(kind) - (kinds.length - 1) / 2) * 8;
+        return { node, y: node.y + node.height / 2 + portOffset };
+      }).filter(Boolean);
+      const ys = [selectedY, ...branches.map(branch => branch.y)];
+      return {
+        direction,
+        kind,
+        busX,
+        selectedX: direction === "in" ? selectedNode.x : selectedNode.x + selectedNode.width,
+        selectedY,
+        branches,
+        top: Math.min(...ys),
+        bottom: Math.max(...ys),
+      };
+    }).sort((a, b) => a.direction.localeCompare(b.direction) || classRelationKindOrder(a.kind) - classRelationKindOrder(b.kind));
+  }
+
+  function classRelationBundle(bundle) {
+    const trunkMarker = bundle.direction === "in" ? ` marker-end="url(#class-arrow-${attr(bundle.kind)})"` : "";
+    const branches = bundle.branches.map(branch => {
+      const nodeX = bundle.direction === "in" ? branch.node.x + branch.node.width : branch.node.x;
+      const marker = bundle.direction === "out" ? ` marker-end="url(#class-arrow-${attr(bundle.kind)})"` : "";
+      return `<path class="class-relation-branch" d="M ${bundle.busX} ${branch.y} H ${nodeX}"${marker}></path><circle cx="${bundle.busX}" cy="${branch.y}" r="2.5"></circle>`;
     }).join("");
-    return `<g class="class-package ${item.isSelected ? "is-selected" : ""} ${item.isFocused ? "is-focused" : ""}" transform="translate(${item.x} ${item.y})">
-      <path class="class-package-shell" d="M 0 24 H 92 L 106 0 H ${item.width} V ${item.height} H 0 Z"></path>
-      <path class="class-package-tab" d="M 0 24 H 92 L 106 0 H ${Math.min(item.width - 18, 210)} V 24 Z"></path>
-      <text class="class-package-title" x="14" y="19">${escapeHtml(truncate(item.name, 35))}</text>
-      <text class="class-package-meta" x="14" y="45">${item.types.length} types · ${item.internalRelationCount || 0} internal relations</text>
-      ${typeRows}
+    const labelX = (bundle.busX + bundle.selectedX) / 2;
+    return `<g class="class-relation-edge ${attr(bundle.kind)} ${bundle.direction}">
+      <path class="class-relation-bus" d="M ${bundle.busX} ${bundle.top} V ${bundle.bottom}"></path>
+      <path class="class-relation-trunk" d="M ${bundle.direction === "in" ? bundle.busX : bundle.selectedX} ${bundle.selectedY} H ${bundle.direction === "in" ? bundle.selectedX : bundle.busX}"${trunkMarker}></path>
+      ${branches}
+      <text x="${labelX}" y="${bundle.selectedY - 8}">${escapeHtml(bundle.kind)}</text>
     </g>`;
   }
 
-  function classPackageEdgePath(source, target, edgeIndex) {
-    const sourceRight = source.x + source.width;
-    const targetRight = target.x + target.width;
-    const sourceCenterX = source.x + source.width / 2;
-    const targetCenterX = target.x + target.width / 2;
-    const sourceCenterY = source.y + source.height / 2;
-    const targetCenterY = target.y + target.height / 2;
-    const sameRow = source.row === target.row;
-    const leftToRight = source.column <= target.column;
-    const laneOffset = ((edgeIndex % 5) - 2) * 9;
-    if (sameRow) {
-      const sourceX = leftToRight ? sourceRight : source.x;
-      const targetX = leftToRight ? target.x : targetRight;
-      const midX = (sourceX + targetX) / 2 + laneOffset;
-      return `M ${sourceX} ${sourceCenterY} H ${midX} V ${targetCenterY} H ${targetX}`;
-    }
-    const down = source.row < target.row;
-    const sourceY = down ? source.y + source.height : source.y;
-    const targetY = down ? target.y : target.y + target.height;
-    const midY = (sourceY + targetY) / 2 + laneOffset;
-    return `M ${sourceCenterX} ${sourceY} V ${midY} H ${targetCenterX} V ${targetY}`;
+  function classTypeNode(node) {
+    const type = node.type;
+    const kindSummary = node.selected ? "focus" : [...node.kinds].sort((a, b) => classRelationKindOrder(a) - classRelationKindOrder(b)).join(" · ");
+    return `<g class="class-type-node ${node.selected ? "is-selected" : ""} ${attr(type.kind)}" transform="translate(${node.x} ${node.y})" data-class-type-id="${attr(type.id)}" tabindex="0" role="button" aria-label="${attr(type.name)}">
+      <rect width="${node.width}" height="${node.height}" rx="5"></rect>
+      <line x1="0" y1="25" x2="${node.width}" y2="25"></line>
+      <text class="class-type-stereotype" x="12" y="17">${escapeHtml(type.kind)}</text>
+      <text class="class-type-name" x="12" y="43">${escapeHtml(truncate(type.name, 29))}</text>
+      <text class="class-type-meta" x="12" y="57">${escapeHtml(truncate(type.namespace || type.folder || type.layer, 38))}</text>
+      <text class="class-type-kinds" x="${node.width - 12}" y="17">${escapeHtml(kindSummary)}</text>
+    </g>`;
   }
 
-  function selectClassDiagramTypes(selected, ranked, relations, limit) {
-    if (!selected) return ranked.slice(0, limit);
-    const relationCounts = new Map();
-    relations.forEach(relation => {
-      if (relation.sourceId === selected.id) relationCounts.set(relation.targetId, (relationCounts.get(relation.targetId) || 0) + 1);
-      if (relation.targetId === selected.id) relationCounts.set(relation.sourceId, (relationCounts.get(relation.sourceId) || 0) + 1);
-    });
-    const neighbors = [...relationCounts.entries()].sort((a, b) => b[1] - a[1] || classTypeScore(typeById.get(b[0])) - classTypeScore(typeById.get(a[0]))).map(([id]) => typeById.get(id));
-    const result = [selected, ...neighbors];
-    ranked.forEach(type => { if (!result.some(item => item.id === type.id)) result.push(type); });
-    return result.slice(0, limit);
+  function renderClassRelationGroups(relations, selectedTypeId) {
+    if (!relations.length) return empty("선택한 조건의 직접 관계가 없습니다.");
+    const groups = groupBy(relations, relation => relation.kind);
+    return [...groups.entries()].sort(([a], [b]) => classRelationKindOrder(a) - classRelationKindOrder(b)).map(([kind, items]) => `
+      <section class="class-relation-group ${attr(kind)}">
+        <header><span class="class-relation-swatch"></span><b>${escapeHtml(kind)}</b><small>${items.length}</small></header>
+        <div class="class-relation-list">${items.map(relation => classRelationItem(relation, selectedTypeId)).join("")}</div>
+      </section>`).join("");
   }
 
   function classRelationItem(relation, selectedTypeId) {
     const outgoing = relation.sourceId === selectedTypeId;
     const other = typeById.get(outgoing ? relation.targetId : relation.sourceId);
-    return `<button class="class-relation-item" data-class-type-id="${attr(other?.id || "")}"><span>${outgoing ? "OUT" : "IN"}</span><b>${escapeHtml(relation.kind)}</b><small>${escapeHtml(other?.name || "Unknown")}</small></button>`;
+    return `<button class="class-relation-item" data-class-type-id="${attr(other?.id || "")}"><span>${outgoing ? "OUT" : "IN"}</span><small>${escapeHtml(other?.name || "Unknown")}</small><em>${escapeHtml(other?.kind || "type")}</em></button>`;
+  }
+
+  function classRelationOtherName(relation, selectedTypeId) {
+    return typeById.get(relation.sourceId === selectedTypeId ? relation.targetId : relation.sourceId)?.name || "";
   }
 
   function classTypeScore(type) { return type ? type.fanIn + type.fanOut + type.methodCount * .25 : 0; }
-  function classRelationPriority(relation, selectedTypeId) { return (relation.sourceId === selectedTypeId || relation.targetId === selectedTypeId ? 100 : 0) + ({ inherits: 8, implements: 7, creates: 4, calls: 3, uses: 1 }[relation.kind] || 0); }
   function truncate(value, length) { return value.length > length ? `${value.slice(0, length - 1)}…` : value; }
 
   function renderSourceUml() {
@@ -1058,17 +1021,30 @@
         </div>
       </section>
       <div class="source-uml-grid">
-        ${model.diagrams.map((diagram, index) => `<section class="panel source-uml-card">
+        ${model.diagrams.map((diagram, index) => {
+          const viewMode = state.sourceUmlViewModes[diagram.id] || "read";
+          const direction = state.sourceUmlDirections[diagram.id] || "auto";
+          return `<section class="panel source-uml-card">
           <div class="panel-header">
             <div><span class="eyebrow">${escapeHtml(diagram.group)}</span><h2>${escapeHtml(diagram.title)}</h2></div>
-            <button class="ghost-button" data-copy-source-uml="${attr(diagram.id)}">${state.sourceUmlCopyStatus === diagram.id ? "복사됨" : "복사"}</button>
+            <div class="source-uml-card-actions">
+              <div class="source-uml-toggle" aria-label="${attr(diagram.title)} 표시 크기">
+                <button class="chip ${viewMode === "read" ? "is-active" : ""}" data-source-uml-view="read" data-source-uml-id="${attr(diagram.id)}">읽기 보기</button>
+                <button class="chip ${viewMode === "fit" ? "is-active" : ""}" data-source-uml-view="fit" data-source-uml-id="${attr(diagram.id)}">전체 맞춤</button>
+              </div>
+              <div class="source-uml-toggle" aria-label="${attr(diagram.title)} 배치 방향">
+                ${["auto", "LR", "TB"].map(value => `<button class="chip ${direction === value ? "is-active" : ""}" data-source-uml-direction="${value}" data-source-uml-id="${attr(diagram.id)}">${value === "auto" ? "자동" : value}</button>`).join("")}
+              </div>
+              <button class="ghost-button" data-copy-source-uml="${attr(diagram.id)}">${state.sourceUmlCopyStatus === diagram.id ? "복사됨" : "복사"}</button>
+            </div>
           </div>
-          <div class="source-uml-render" data-source-uml-index="${index}"><div class="source-uml-loading">Mermaid 렌더링 중</div></div>
+          <div class="source-uml-render is-${viewMode}" data-source-uml-index="${index}" data-source-uml-id="${attr(diagram.id)}"><div class="source-uml-loading">Mermaid 렌더링 중</div></div>
           <details class="mermaid-details">
             <summary>Mermaid 코드</summary>
             <pre class="mermaid-code"><code>${escapeHtml(diagram.code)}</code></pre>
           </details>
-        </section>`).join("")}
+        </section>`;
+        }).join("")}
       </div>
       <section class="panel">
         <div class="panel-header"><h2>근거가 약한 관계 / 제외</h2><span class="muted">not drawn</span></div>
@@ -1108,17 +1084,36 @@
       if (!diagram) return;
       try {
         const renderId = `source-uml-mermaid-${diagram.id}-${++sourceUmlRenderSeq}`;
-        const result = await window.mermaid.render(renderId, diagram.code);
+        const direction = state.sourceUmlDirections[diagram.id] || "auto";
+        const result = await window.mermaid.render(renderId, sourceUmlRenderCode(diagram, direction));
         target.innerHTML = result.svg;
         const svg = target.querySelector("svg");
         if (svg) {
           svg.removeAttribute("height");
           svg.classList.add("source-uml-mermaid-svg");
+          const viewBox = svg.viewBox?.baseVal;
+          if (viewBox?.width) svg.style.setProperty("--source-uml-width", `${Math.ceil(viewBox.width)}px`);
         }
       } catch (error) {
         target.innerHTML = `<div class="empty-state">Mermaid 렌더링 실패: ${escapeHtml(error.message || error)}</div>`;
       }
     });
+  }
+
+  function sourceUmlRenderCode(diagram, directionMode) {
+    const direction = directionMode === "auto" ? sourceUmlPreferredDirection(diagram) : directionMode;
+    if (/^direction\s+(LR|TB)$/m.test(diagram.code)) return diagram.code.replace(/^direction\s+(LR|TB)$/m, `direction ${direction}`);
+    return diagram.code.replace(/^classDiagram\s*$/m, `classDiagram\ndirection ${direction}`);
+  }
+
+  function sourceUmlPreferredDirection(diagram) {
+    if (diagram.id === "overview") return "LR";
+    const parsed = parseMermaidClassDiagram(diagram.code);
+    const memberCount = parsed.classes.reduce((sum, item) => sum + item.members.length, 0);
+    const inheritanceRelations = parsed.relations.filter(item => ["--|>", "..|>"].includes(item.kind)).length;
+    if (parsed.classes.length >= 8 && memberCount <= parsed.classes.length * 1.5) return "LR";
+    if (inheritanceRelations >= 5 && parsed.classes.length >= 7) return "LR";
+    return "TB";
   }
 
   function copySourceUml(id) {
@@ -1363,6 +1358,7 @@
       rows: [
         { area: "Combat", type: "EnemyEntity, AABB, EnemyState, CombatConstants", surface: "공개 combat state/value API", relation: "EnemyEntity *-- AABB, EnemyEntity o-- EnemyState" },
         { area: "Handlers", type: "IPacketHandler + concrete handlers", surface: "Handle(GameSession, ArraySegment<byte>)", relation: "handlers ..|> IPacketHandler, HandlerRegistry o-- IPacketHandler" },
+        { area: "Client Handlers", type: "IClientPacketHandler, UnityClientSession, PlayerAttackHandler, PlayerHpHandler", surface: "socket decode → main-thread visual/HUD update", relation: "client handlers ..|> IClientPacketHandler, UnityClientSession o-- IClientPacketHandler" },
         { area: "Loop", type: "GameWorld, TickScheduler, TickMetrics, Stats", surface: "world/tick lifecycle", relation: "GameWorld *-- GameMap, GameWorld *-- TickScheduler, TickMetrics *-- Stats" },
         { area: "Maps", type: "GameMap, PlayerEntity, Portal, systems", surface: "map actor, players, enemies, portal table", relation: "GameMap *-- PlayerEntity/EnemyEntity/systems, PlayerEntity *-- InputCommand" },
         { area: "Maps/States", type: "ActorState<T>, StateMachine<T>, player/enemy/boss states", surface: "state enter/tick/exit API", relation: "state classes --|> ActorState<T>, StateMachine *-- ActorState" },
@@ -1375,6 +1371,7 @@
 direction LR
 class Combat
 class Handlers
+class ClientHandlers
 class Loop
 class Maps
 class GameServerNetwork
@@ -1383,6 +1380,7 @@ class PacketGenerator
 
 GameServerNetwork --|> ServerNetwork : GameSession -> PacketSession
 Handlers ..> GameServerNetwork : Handle(GameSession)
+GameServerNetwork ..> ClientHandlers : S_PlayerAttack / S_PlayerHp
 Loop *-- Maps : GameWorld owns GameMap
 Maps *-- Combat : GameMap owns EnemyEntity
 Maps ..> GameServerNetwork : PlayerEntity Owner / Broadcast
@@ -1446,6 +1444,33 @@ HandshakeHandler ..|> IPacketHandler
 MoveIntentHandler ..|> IPacketHandler
 PingHandler ..|> IPacketHandler
 HandlerRegistry o-- IPacketHandler : registry`),
+        diagram("client-handlers", "Client Handlers", "Client Network", String.raw`classDiagram
+direction TB
+class IClientPacketHandler {
+  <<interface>>
+  +Handle(UnityClientSession session, ArraySegment~byte~ buffer)
+}
+class UnityClientSession {
+  -IReadOnlyDictionary~PacketID, IClientPacketHandler~ _handlers
+  +void OnRecvPacket(ArraySegment~byte~ buffer)
+}
+class PlayerAttackHandler {
+  +void Handle(UnityClientSession session, ArraySegment~byte~ buffer)
+}
+class PlayerHpHandler {
+  +void Handle(UnityClientSession session, ArraySegment~byte~ buffer)
+}
+class ProjectileSpawner {
+  +void Spawn(GameObject prefab, Transform spawnRoot, Transform target, int facing)
+}
+class HudController {
+  +void UpdateHP(int currentHp, int maxHp)
+}
+PlayerAttackHandler ..|> IClientPacketHandler
+PlayerHpHandler ..|> IClientPacketHandler
+UnityClientSession o-- IClientPacketHandler : dispatch table
+PlayerAttackHandler ..> ProjectileSpawner : ranged visual
+PlayerHpHandler ..> HudController : authoritative HP`),
         diagram("loop", "Loop", "Loop", String.raw`classDiagram
 direction TB
 class GameWorld {
@@ -1759,7 +1784,7 @@ Program ..> PacketFormat : string templates`),
       </div>
       <div class="detail-grid">
         <section class="panel">
-          <div class="panel-header"><h2>메서드</h2><span class="muted">클릭하면 호출 탐색</span></div>
+          <div class="panel-header"><h2>메서드</h2><span class="muted">${methods.length} methods</span></div>
           <div class="method-access-groups">${renderMethodAccessGroups(methods)}</div>
         </section>
         <section class="panel">
@@ -1793,42 +1818,6 @@ Program ..> PacketFormat : string templates`),
     if (modifiers.has("protected") || modifiers.has("internal")) return "protected-internal";
     if (modifiers.has("private")) return "private";
     return "unknown";
-  }
-
-  function renderCalls() {
-    let method = methodById.get(state.selectedMethodId);
-    if (!method) {
-      const candidates = data.methods.filter(item => item.calls.length || item.calledBy.length)
-        .sort((a, b) => (b.calls.length + b.calledBy.length) - (a.calls.length + a.calledBy.length));
-      method = candidates[0];
-      state.selectedMethodId = method?.id || null;
-      if (method) state.selectedTypeId = method.typeId;
-    }
-    if (!method) { main.innerHTML = empty("호출 관계가 해석된 메서드가 없습니다."); return; }
-    const owner = typeById.get(method.typeId);
-    const unresolved = method.unresolvedCalls.length;
-    main.innerHTML = `
-      <header class="page-header">
-        <div>
-          <span class="eyebrow">CALL STACK EXPLORER</span>
-          <h1>${escapeHtml(owner?.name || "Unknown")}.${escapeHtml(method.name)}</h1>
-          <p class="subtitle">호출 대상과 역호출자를 최대 4단계까지 따라갑니다. 순환 경로는 반복 표시하지 않습니다.</p>
-          <div class="badge-row">${badge(`${method.calls.length} outbound`, "accent")}${badge(`${method.calledBy.length} inbound`)}${badge(`${unresolved} unresolved`, unresolved > 8 ? "medium" : "")}</div>
-        </div>
-        <div class="source-ref">${escapeHtml(method.file)}:${method.startLine}</div>
-      </header>
-      <section class="panel">
-        <div class="panel-header"><h2>현재 프레임</h2><button class="link-button" data-type-id="${attr(method.typeId)}">소유 타입 보기</button></div>
-        <div class="method-item is-selected"><div><div class="method-signature">${escapeHtml(method.signature)}</div><div class="method-meta">returns ${escapeHtml(method.returnType)} · ${method.sourceLines} lines</div></div></div>
-      </section>
-      <div class="call-columns">
-        <section class="panel"><div class="panel-header"><h2>호출 대상</h2><span class="muted">outbound</span></div>${renderCallTree(method.id, "calls")}</section>
-        <section class="panel"><div class="panel-header"><h2>역호출자</h2><span class="muted">inbound</span></div>${renderCallTree(method.id, "calledBy")}</section>
-      </div>
-      <section class="panel">
-        <div class="panel-header"><h2>해석되지 않은 호출 이름</h2><span class="muted">프레임워크 API, 체인 호출, 동적 바인딩 포함</span></div>
-        <div class="badge-row">${method.unresolvedCalls.slice(0, 80).map(name => badge(name)).join("") || '<span class="muted">없음</span>'}</div>
-      </section>`;
   }
 
   function renderDiagnostics() {
@@ -1948,14 +1937,12 @@ Program ..> PacketFormat : string templates`),
     }
     const type = typeById.get(state.selectedTypeId);
     if (!type) return;
-    const method = methodById.get(state.selectedMethodId);
     const outgoing = (outgoingByType.get(type.id) || []).filter(relation => relationEndpointVisible(relation.targetId));
     const incoming = (incomingByType.get(type.id) || []).filter(relation => relationEndpointVisible(relation.sourceId));
     const diagnostics = diagnosticsByType.get(type.id) || [];
     const diagnosticPrinciples = [...new Set(diagnostics.map(item => item.principle))];
     contextPanel.innerHTML = `
       <section class="context-card"><span class="eyebrow">PINNED TYPE</span><h3>${escapeHtml(type.name)}</h3><p>${escapeHtml(type.file)}:${type.startLine}</p><div class="badge-row">${badge(type.kind)}${badge(type.layer, "accent")}</div></section>
-      ${method ? `<section class="context-card"><span class="eyebrow">PINNED METHOD</span><h3>${escapeHtml(method.name)}</h3><p>${escapeHtml(method.signature)}</p><button class="link-button" data-method-id="${attr(method.id)}">호출 트리 열기</button></section>` : ""}
       <section class="context-card"><h3>나가는 관계</h3><div class="context-list">${outgoing.slice(0, 9).map(relation => contextRelation(relation, "out")).join("") || `<p>없음</p>`}</div></section>
       <section class="context-card"><h3>들어오는 관계</h3><div class="context-list">${incoming.slice(0, 9).map(relation => contextRelation(relation, "in")).join("") || `<p>없음</p>`}</div></section>
       <section class="context-card"><h3>검토 신호 요약</h3><p>${diagnostics.length ? `${diagnostics.length}개 · ${escapeHtml(diagnosticPrinciples.join(" · "))}` : "현재 신호 없음"}</p><button class="link-button" data-diagnostic-type="${attr(type.id)}">진단 탭에서 확인</button></section>`;
@@ -2063,8 +2050,8 @@ Program ..> PacketFormat : string templates`),
           node("attack-handler", "AttackHandler", "decode only", "server", 674, "Server", "handler는 decode와 세션 게이트만 수행하고 상태를 직접 변경하지 않습니다.", ["IPacketHandler", "decode-only"], "authority"),
           node("attack-queue", "Map Job Queue", "tick thread handoff", "server", 876, "Server", "공격 작업을 해당 맵 actor의 tick thread로 전달합니다.", ["GameMap.EnqueueJob", "no await"], "authority"),
           node("attack-validate", "6단계 검증", "range · alive · rate", "server", 1078, "Server", "서버 위치를 기준으로 공격 가능성과 중복 요청을 검증합니다.", ["ProcessAttack", "trust boundary"], "authority"),
-          node("combat-result", "상태 확정", "HP · death · clear", "server", 1280, "Server", "HP mutation 뒤 hit, death, stage clear 이벤트를 순서대로 만듭니다.", ["S_HitResult", "S_EntityDeath", "S_StageClear"], "authority"),
-          node("combat-render", "결과 표현", "effect · UI · despawn", "client", 1482, "Client", "서버 결과를 받아 피해 효과, 사망, 스테이지 UI를 갱신합니다.", ["DamageFlash", "StageClear UI"], "result"),
+          node("combat-result", "상태 확정", "HP · attack · death", "server", 1280, "Server", "서버가 피해와 HP를 확정하고 원격 공격 연출 및 권위 HP 패킷을 브로드캐스트합니다.", ["S_HitResult", "S_PlayerAttack", "S_PlayerHp"], "authority"),
+          node("combat-render", "결과 표현", "projectile · HUD · death", "client", 1482, "Client", "Client handler가 원격 공격 연출과 로컬 HP HUD를 main thread에서 반영합니다.", ["PlayerAttackHandler", "PlayerHpHandler", "ProjectileSpawner"], "result"),
         ],
         edges: [
           { from: "attack-input", to: "attack-packet", label: "intent", tone: "intent" },
@@ -2102,14 +2089,21 @@ Program ..> PacketFormat : string templates`),
       generation: {
         ...base, id: "generation", title: "패킷 생성", kicker: "PACKET GENERATOR",
         description: "PacketGenerator가 PDL.xml을 읽고 Shared 패킷 계약과 양쪽 packet manager 코드를 생성하는 흐름입니다.",
+        layout: "generation",
+        phases: [
+          { title: "1 · SCHEMA", x: 190, width: 190 },
+          { title: "2 · GENERATOR", x: 500, width: 500 },
+          { title: "3 · ARTIFACTS", x: 1150, width: 190 },
+          { title: "4 · RUNTIME", x: 1580, width: 190 },
+        ],
         nodes: [
-          node("pdl", "PDL.xml", "packet schema", "tool", 68, "Tool", "패킷 이름, 필드, 리스트 구조를 XML 계약으로 정의합니다.", ["PDL.xml", "schema"], "intent"),
-          node("program", "Program.Main", "parse + emit", "tool", 292, "Tool", "XmlReader로 packet/member/list를 순회하고 생성 문자열을 조립합니다.", ["ParsePacket", "ParseMembers"], "authority"),
-          node("format", "PacketFormat", "template catalog", "tool", 516, "Tool", "packet, enum, manager, read/write 템플릿을 한곳에서 제공합니다.", ["packetFormat", "managerFormat"]),
-          node("gen-packets", "GenPackets.cs", "shared contract", "contract", 740, "Shared", "양쪽 런타임이 함께 쓰는 PacketID, IPacket, read/write 코드를 생성합니다.", ["98_Shared/Protocol/Generated"], "result"),
-          node("server-manager", "ServerPacketManager", "server dispatch", "server", 964, "Server", "서버 handler 등록 코드를 생성해 수신 패킷을 게임 로직으로 연결합니다.", ["GameServer/Network/Generated"], "result"),
-          node("client-manager", "ClientPacketManager", "client dispatch", "transport", 1188, "ClientNet", "클라이언트 packet manager를 생성해 wire 패킷을 클라이언트 처리기로 연결합니다.", ["04_ClientNet/Generated"], "result"),
-          node("runtime-contract", "런타임 계약", "same packet IDs", "client", 1412, "Client", "Client와 Server가 같은 Shared 계약과 manager 출력을 기준으로 통신합니다.", ["PacketID", "wire compatibility"], "result"),
+          node("pdl", "PDL.xml", "packet schema", "tool", 190, "Tool", "패킷 이름, 필드, 리스트 구조를 XML 계약으로 정의합니다.", ["PDL.xml", "schema"], "intent"),
+          node("program", "Program.Main", "parse XML", "tool", 500, "Tool", "XmlReader로 packet/member/list를 순회하고 생성 대상을 구성합니다.", ["ParsePacket", "ParseMembers"], "authority"),
+          node("format", "PacketFormat", "apply templates", "tool", 810, "Tool", "packet, enum, manager, read/write 템플릿을 적용해 세 산출물을 병렬 생성합니다.", ["packetFormat", "managerFormat"], "authority"),
+          node("gen-packets", "GenPackets.cs", "PacketID · IPacket", "contract", 1150, "Shared", "양쪽 런타임이 함께 쓰는 패킷 ID와 read/write 계약입니다.", ["98_Shared/Protocol/Generated"], "result"),
+          node("server-manager", "ServerPacketManager", "server dispatch", "server", 1150, "Server", "서버 수신 패킷을 등록된 game handler로 분배하는 생성 코드입니다.", ["GameServer/Network/Generated"], "result"),
+          node("client-manager", "ClientPacketManager", "client dispatch", "transport", 1150, "ClientNet", "ClientNet 수신 패킷을 클라이언트 세션 처리로 분배하는 생성 코드입니다.", ["04_ClientNet/Generated"], "result"),
+          node("runtime-contract", "동일 PacketID 호환", "shared wire contract", "contract", 1580, "Client + Server", "Client와 Server가 같은 PacketID와 직렬화 규칙을 사용해야 통신이 성립합니다.", ["PacketID", "wire compatibility"], "result"),
         ],
         edges: [
           { from: "pdl", to: "program", label: "read", tone: "intent" },
@@ -2140,22 +2134,6 @@ Program ..> PacketFormat : string templates`),
     return [...counts.entries()].map(([kind, count]) => ({ kind, count })).sort((a, b) => b.count - a.count);
   }
 
-  function renderCallTree(rootId, direction) {
-    const root = methodById.get(rootId);
-    const children = root?.[direction] || [];
-    if (!children.length) return empty(direction === "calls" ? "해석된 호출 대상이 없습니다." : "해석된 역호출자가 없습니다.");
-    const branch = (methodId, depth, visited) => {
-      const method = methodById.get(methodId);
-      if (!method) return "";
-      const owner = typeById.get(method.typeId);
-      const cycle = visited.has(methodId);
-      const nextVisited = new Set(visited); nextVisited.add(methodId);
-      const next = cycle || depth >= 4 ? [] : method[direction];
-      return `<li><button class="call-node" data-method-id="${attr(method.id)}"><b>${escapeHtml(owner?.name || "?")}.${escapeHtml(method.name)}</b><span>${escapeHtml(method.signature)}${cycle ? " · cycle" : ""}</span></button>${next.length ? `<ul>${next.slice(0, 12).map(id => branch(id, depth + 1, nextVisited)).join("")}</ul>` : ""}</li>`;
-    };
-    return `<ul class="call-tree">${children.slice(0, 16).map(id => branch(id, 1, new Set([rootId]))).join("")}</ul>`;
-  }
-
   function relationItem(relation, direction) {
     const targetId = direction === "out" ? relation.targetId : relation.sourceId;
     const target = typeById.get(targetId);
@@ -2169,7 +2147,7 @@ Program ..> PacketFormat : string templates`),
   }
 
   function methodItem(method) {
-    return `<div class="method-item ${method.id === state.selectedMethodId ? "is-selected" : ""}" data-method-id="${attr(method.id)}"><div><div class="method-signature">${escapeHtml(method.signature)}</div><div class="method-meta">${method.sourceLines} lines · ${method.calls.length} calls · ${method.calledBy.length} callers</div></div><span class="relation-kind">trace</span></div>`;
+    return `<div class="method-item"><div><div class="method-signature">${escapeHtml(method.signature)}</div><div class="method-meta">returns ${escapeHtml(method.returnType)} · ${method.sourceLines} lines</div></div></div>`;
   }
 
   function diagnosticCard(item) {

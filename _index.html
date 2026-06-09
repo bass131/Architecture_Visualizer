@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>DawnHolder Architecture Atlas</title>
-  <link rel="stylesheet" href="assets/styles.css">
+  <link rel="stylesheet" href="assets/styles.css?v=source-uml-mermaid-20260608">
 </head>
 <body>
   <header class="topbar">
@@ -23,7 +23,6 @@
       <button class="tab" data-view="source-uml">소스 UML</button>
       <button class="tab" data-view="explorer">구조 탐색</button>
       <button class="tab" data-view="diagnostics">SOLID 진단</button>
-      <button class="tab" data-view="calls">호출 탐색</button>
     </nav>
     <div class="top-actions">
       <button id="help-button" class="ghost-button">읽는 법</button>
@@ -74,14 +73,13 @@
       <section><b>전체 구조도</b><p>주요 실행 영역, 생성 도구, 공유 계약, 신뢰 경계를 한 장의 구조도로 봅니다.</p></section>
       <section><b>클래스 맵</b><p>Client, ClientNet, Server, Shared, Tool 영역의 핵심 타입과 관계를 선택 중심으로 탐색합니다.</p></section>
       <section><b>관계도</b><p>들어오는 관계 → 선택 타입 → 나가는 관계 순서로 단계별 탐색합니다.</p></section>
-      <section><b>호출 스택</b><p>메서드의 호출 대상과 역호출자를 최대 4단계까지 펼칩니다.</p></section>
       <section><b>SOLID 신호</b><p>확정 위반이 아니라 검토할 근거입니다. 실제 책임과 변경 이유를 함께 판단하세요.</p></section>
     </div>
     <p class="accuracy-note">정적 syntax-first 분석이므로 reflection, delegate, DI 런타임 바인딩과 일부 오버로드는 연결되지 않을 수 있습니다.</p>
   </dialog>
 
-  <script src="data/architecture-data.js"></script>
-  <script src="assets/vendor/mermaid.min.js"></script>
-  <script src="assets/app.js"></script>
+  <script src="data/architecture-data.js?v=source-uml-mermaid-20260608"></script>
+  <script src="assets/vendor/mermaid.min.js?v=source-uml-mermaid-20260608"></script>
+  <script src="assets/app.js?v=source-uml-mermaid-20260608"></script>
 </body>
 </html>
