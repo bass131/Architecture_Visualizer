@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>DawnHolder Architecture Atlas</title>
-  <link rel="stylesheet" href="assets/styles.css?v=source-uml-mermaid-20260608">
+  <link rel="stylesheet" href="assets/styles.css?v=mobile-layout-20260609">
 </head>
 <body>
   <header class="topbar">
@@ -30,11 +30,12 @@
   </header>
 
   <div class="app-shell">
+    <button id="panel-backdrop" class="panel-backdrop" type="button" aria-label="열린 패널 닫기" aria-hidden="true" tabindex="-1"></button>
     <button id="sidebar-toggle" class="panel-edge-toggle sidebar-edge-toggle" aria-controls="project-explorer" aria-expanded="true" title="Project Explorer 접기">
-      <span aria-hidden="true">‹</span><span class="sr-only">Project Explorer 접기</span>
+      <span aria-hidden="true">‹</span><span class="panel-toggle-label">탐색</span><span class="sr-only">Project Explorer 접기</span>
     </button>
     <button id="context-toggle" class="panel-edge-toggle context-edge-toggle" aria-controls="context-panel" aria-expanded="true" title="설명 패널 접기">
-      <span aria-hidden="true">›</span><span class="sr-only">설명 패널 접기</span>
+      <span aria-hidden="true">›</span><span class="panel-toggle-label">설명</span><span class="sr-only">설명 패널 접기</span>
     </button>
     <aside id="project-explorer" class="sidebar">
       <label class="search-box">
@@ -80,6 +81,6 @@
 
   <script src="data/architecture-data.js?v=source-uml-mermaid-20260608"></script>
   <script src="assets/vendor/mermaid.min.js?v=source-uml-mermaid-20260608"></script>
-  <script src="assets/app.js?v=source-uml-mermaid-20260608"></script>
+  <script src="assets/app.js?v=mobile-layout-20260609"></script>
 </body>
 </html>

@@ -34,11 +34,13 @@ def main() -> int:
     index = (ROOT / "_index.html").read_text(encoding="utf-8")
     assert 'src="data/architecture-data.js' in index, "Generated dataset is not loaded by _index.html"
     assert 'src="assets/app.js' in index, "Application script is not loaded by _index.html"
+    assert "mobile-layout-20260609" in index, "Mobile layout assets must use the current cache-busting version"
     assert 'data-view="flow"' in index, "End-to-end architecture flow is not discoverable from _index.html"
     assert 'data-view="architecture"' in index, "High-level architecture overview is not discoverable from _index.html"
     assert 'data-view="classes"' in index, "Area class diagrams are not discoverable from _index.html"
     assert 'data-view="calls"' not in index and "호출 탐색" not in index, "Call explorer tab must remain removed"
     assert 'id="sidebar-toggle"' in index and 'id="context-toggle"' in index, "Side panel visibility controls are missing"
+    assert 'id="panel-backdrop"' in index and "panel-toggle-label" in index, "Compact panel drawer controls are missing"
     assert "http://" not in index and "https://" not in index, "_index.html must not depend on a network resource"
 
     pages_workflow = (ROOT / ".github/workflows/pages.yml").read_text(encoding="utf-8")
@@ -75,6 +77,9 @@ def main() -> int:
     assert ".channel-flow-dot" in styles and app.count("flowAnimationDuration(") >= 3, "Flow and architecture animations must use the shared path-speed helper"
     assert ".app-shell.is-sidebar-collapsed" in styles and ".app-shell.is-context-collapsed" in styles, "Side panel collapse layout is missing"
     assert ".sidebar-edge-toggle" in styles and ".context-edge-toggle" in styles, "Side panel controls must remain adjacent to their panels"
+    assert "compactPanelViewport" in app and "function closeCompactPanels" in app, "Compact layouts must expose dismissible panel drawers"
+    assert '@media (max-width: 480px)' in styles and "100dvh" in styles and "scroll-snap-type" in styles, "Mobile layout breakpoints and touch navigation are missing"
+    assert "width: max(1100px, 140vw) !important" in styles and "overscroll-behavior-inline" in styles, "Mobile diagrams must preserve readable scale with horizontal navigation"
     assert ".class-diagram" in styles and ".class-type-node" in styles, "Local class diagram styles are missing"
     assert "function buildLocalClassLayout" in app and "function buildClassRelationBundles" in app, "Selected-type one-hop class layout is missing"
     assert "INCOMING" in app and "OUTGOING" in app and "SELECTED TYPE" in app, "Class-map relationship direction columns are missing"
