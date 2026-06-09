@@ -37,7 +37,6 @@ cd /mnt/c/Dev/DawnHolder_Architecture
 - **클래스 맵**: Client, ClientNet, Server, Shared, Tool 영역의 핵심 타입과 내부 관계를 선택 중심으로 탐색
 - **구조 탐색**: 타입 관계, 멤버, 메서드, 진단
 - **SOLID 진단**: SRP, ISP, DIP, 결합도, 순환 의존 신호
-- **호출 탐색**: 메서드 호출과 역호출 트리
 
 ## 프로젝트 경계
 
@@ -72,13 +71,13 @@ Codex 입력창에서 `/`를 누르면 내장 슬래시 명령을 검색할 수 
 
 분석 결과는 설계 검토를 돕는 신호입니다. 줄 수가 길다고 자동으로 분리하거나, 인터페이스가 크다고 무조건 나쁜 것은 아닙니다. 프로젝트의 변경 이유와 도메인 경계를 함께 판단해야 합니다.
 
-호출 그래프는 정적 추정입니다. reflection, delegate, event, dependency injection 런타임 바인딩과 일부 체인 호출은 표시되지 않을 수 있습니다.
+호출 관계는 결합도와 진단 계산을 위한 정적 추정치입니다. reflection, delegate, event, dependency injection 런타임 바인딩과 일부 체인 호출은 해석되지 않을 수 있습니다.
 
 ## 주요 파일
 
 ```text
 _index.html                 단일 진입점
-assets/app.js               탐색 및 호출 트리 UI
+assets/app.js               탐색 및 다이어그램 UI
 assets/styles.css           시각 체계
 data/architecture-data.js   생성 결과
 tools/analyze.py            WSL 정적 분석기

@@ -21,24 +21,24 @@
   }
 
   const typeById = new Map(data.types.map(item => [item.id, item]));
-  const methodById = new Map(data.methods.map(item => [item.id, item]));
   const methodsByType = groupBy(data.methods, item => item.typeId);
   const diagnosticsByType = groupBy(data.diagnostics, item => item.typeId);
   const outgoingByType = groupBy(data.relations, item => item.sourceId);
   const incomingByType = groupBy(data.relations, item => item.targetId);
   const flowScenarios = createFlowScenarios();
   const classAreas = createClassAreas();
-  const viewNames = new Set(["overview", "flow", "architecture", "classes", "source-uml", "explorer", "diagnostics", "calls"]);
+  const viewNames = new Set(["overview", "flow", "architecture", "classes", "source-uml", "explorer", "diagnostics"]);
   const state = {
     view: initialView(),
     selectedTypeId: pickInitialType(),
-    selectedMethodId: null,
     search: "",
     diagnosticSeverity: "all",
     diagnosticPrinciple: "all",
     diagnosticTypeId: null,
     diagnosticCopyStatus: null,
     sourceUmlCopyStatus: null,
+    sourceUmlViewModes: {},
+    sourceUmlDirections: {},
     architectureCopyStatus: null,
     sidebarCollapsed: readPanelPreference("atlas.sidebarCollapsed"),
     contextCollapsed: readPanelPreference("atlas.contextCollapsed"),
@@ -141,11 +141,6 @@
       selectType(typeTarget.dataset.typeId);
       return;
     }
-    const methodTarget = event.target.closest("[data-method-id]");
-    if (methodTarget) {
-      selectMethod(methodTarget.dataset.methodId);
-      return;
-    }
     const layerTarget = event.target.closest("[data-layer]");
     if (layerTarget) {
       state.layerFilter = layerTarget.dataset.layer;
@@ -193,6 +188,18 @@
     const copySourceUmlTarget = event.target.closest("[data-copy-source-uml]");
     if (copySourceUmlTarget) {
       copySourceUml(copySourceUmlTarget.dataset.copySourceUml);
+      render();
+      return;
+    }
+    const sourceUmlViewTarget = event.target.closest("[data-source-uml-view]");
+    if (sourceUmlViewTarget) {
+      state.sourceUmlViewModes[sourceUmlViewTarget.dataset.sourceUmlId] = sourceUmlViewTarget.dataset.sourceUmlView;
+      render();
+      return;
+    }
+    const sourceUmlDirectionTarget = event.target.closest("[data-source-uml-direction]");
+    if (sourceUmlDirectionTarget) {
+      state.sourceUmlDirections[sourceUmlDirectionTarget.dataset.sourceUmlId] = sourceUmlDirectionTarget.dataset.sourceUmlDirection;
       render();
       return;
     }
@@ -330,28 +337,12 @@
   function selectType(typeId) {
     if (!typeById.has(typeId)) return;
     state.selectedTypeId = typeId;
-    const typeMethods = methodsByType.get(typeId) || [];
-    if (!typeMethods.some(method => method.id === state.selectedMethodId)) {
-      state.selectedMethodId = typeMethods[0]?.id || null;
-    }
     state.view = "explorer";
     history.replaceState(null, "", "#explorer");
     syncTabs();
     renderTree();
     render();
     main.focus({ preventScroll: true });
-  }
-
-  function selectMethod(methodId) {
-    const method = methodById.get(methodId);
-    if (!method) return;
-    state.selectedMethodId = methodId;
-    state.selectedTypeId = method.typeId;
-    state.view = "calls";
-    history.replaceState(null, "", "#calls");
-    syncTabs();
-    renderTree();
-    render();
   }
 
   function render() {
@@ -361,7 +352,6 @@
     else if (state.view === "classes") renderClasses();
     else if (state.view === "source-uml") renderSourceUml();
     else if (state.view === "diagnostics") renderDiagnostics();
-    else if (state.view === "calls") renderCalls();
     else renderExplorer();
     renderContext();
   }
@@ -542,18 +532,25 @@
     const usedLanes = scenario.lanes.filter(lane => usedLaneIds.has(lane.id))
       .map((lane, index) => ({ ...lane, y: 56 + index * 142, height: 126 }));
     const laneY = new Map(usedLanes.map(lane => [lane.id, lane.y]));
-    const nodeWidth = 148;
-    const nodeHeight = 64;
-    const layoutNodes = scenario.nodes.map((node, index) => ({ ...node, x: 190 + index * 220, y: laneY.get(node.laneId) + 42 }));
+    const isGenerationLayout = scenario.layout === "generation";
+    const nodeWidth = isGenerationLayout ? 190 : 148;
+    const nodeHeight = isGenerationLayout ? 72 : 64;
+    const layoutNodes = scenario.nodes.map((node, index) => ({
+      ...node,
+      x: isGenerationLayout ? node.x : 190 + index * 238,
+      y: laneY.get(node.laneId) + (isGenerationLayout ? 36 : 42),
+    }));
     const nodeById = new Map(layoutNodes.map(node => [node.id, node]));
     const diagramHeight = Math.max(...usedLanes.map(lane => lane.y + lane.height)) + 18;
     const diagramWidth = Math.max(1260, layoutNodes.at(-1).x + nodeWidth + 38);
     const paths = scenario.edges.map((edge, index) => {
       const source = nodeById.get(edge.from);
       const target = nodeById.get(edge.to);
-      const route = orthogonalPath(source, target, nodeWidth, nodeHeight);
       const edgeLabel = flowEdgeLabel(edge.label);
-      const labelWidth = Math.max(48, edgeLabel.length * 7 + 18);
+      const labelWidth = Math.max(48, Math.ceil(measureSvgText(edgeLabel, 9)) + 18);
+      const route = isGenerationLayout
+        ? generationFlowPath(edge, source, target, nodeWidth, nodeHeight, labelWidth)
+        : orthogonalPath(source, target, nodeWidth, nodeHeight);
       return `<g class="diagram-connector ${attr(edge.tone || "data")}">
         <path d="${route.path}" marker-end="url(#arrow-${attr(edge.tone || "data")})"></path>
         <rect class="connector-label-bg" x="${route.labelX - labelWidth / 2}" y="${route.labelY - 10}" width="${labelWidth}" height="16" rx="4"></rect>
@@ -568,11 +565,14 @@
       </defs>
       <rect class="diagram-grid-bg" width="100%" height="100%"></rect>
       <text class="diagram-stage-heading" x="22" y="30">RESPONSIBILITY</text>
-      ${layoutNodes.map((node, index) => `<g class="diagram-stage-marker ${node.id === selectedNodeId ? "is-selected" : ""}" transform="translate(${node.x + nodeWidth / 2} 24)"><circle r="11"></circle><text y="4">${index + 1}</text></g>`).join("")}
+      ${scenario.phases
+        ? scenario.phases.map(phase => `<g class="diagram-phase" transform="translate(${phase.x} 16)"><line x1="0" y1="18" x2="${phase.width}" y2="18"></line><text x="${phase.width / 2}" y="8">${escapeHtml(phase.title)}</text></g>`).join("")
+        : layoutNodes.map((node, index) => `<g class="diagram-stage-marker ${node.id === selectedNodeId ? "is-selected" : ""}" transform="translate(${node.x + nodeWidth / 2} 24)"><circle r="11"></circle><text y="4">${index + 1}</text></g>`).join("")}
       ${usedLanes.map(lane => `<g class="diagram-lane ${attr(lane.id)}"><rect x="8" y="${lane.y}" width="${diagramWidth - 16}" height="${lane.height}"></rect><line x1="152" y1="${lane.y}" x2="152" y2="${lane.y + lane.height}"></line><text x="22" y="${lane.y + 28}">${escapeHtml(lane.title)}</text><text class="lane-caption" x="22" y="${lane.y + 48}">${escapeHtml(lane.caption)}</text></g>`).join("")}
       ${paths}
       ${layoutNodes.map((node, index) => `<g class="diagram-node ${node.id === selectedNodeId ? "is-selected" : ""} ${attr(node.tone || "data")}" data-flow-node="${attr(node.id)}" tabindex="0" role="button" aria-label="${index + 1}. ${attr(node.title)}" transform="translate(${node.x} ${node.y})">
-        <rect width="${nodeWidth}" height="${nodeHeight}"></rect><circle cx="16" cy="16" r="10"></circle><text class="node-order" x="16" y="20">${index + 1}</text><text class="node-title" x="32" y="24">${escapeHtml(node.title)}</text><text class="node-subtitle" x="14" y="45">${escapeHtml(node.subtitle)}</text><text class="node-layer" x="14" y="58">${escapeHtml(node.layer)}</text>
+        <title>${escapeHtml(`${node.title} · ${node.subtitle} · ${node.layer}`)}</title>
+        <rect width="${nodeWidth}" height="${nodeHeight}"></rect><circle cx="16" cy="16" r="10"></circle><text class="node-order" x="16" y="20">${index + 1}</text><text class="node-title" x="32" y="24">${escapeHtml(fitSvgText(node.title, nodeWidth - 42, 12))}</text><text class="node-subtitle" x="14" y="${isGenerationLayout ? 48 : 45}">${escapeHtml(fitSvgText(node.subtitle, nodeWidth - 28, 10))}</text><text class="node-layer" x="14" y="${isGenerationLayout ? 64 : 58}">${escapeHtml(fitSvgText(node.layer, nodeWidth - 28, 9))}</text>
       </g>`).join("")}
     </svg>`;
   }
@@ -588,6 +588,57 @@
       labelX: middleX,
       labelY: source.y === target.y ? source.y - 12 : (startY + endY) / 2,
     };
+  }
+
+  function generationFlowPath(edge, source, target, nodeWidth, nodeHeight, labelWidth) {
+    const startX = source.x + nodeWidth;
+    const startY = source.y + nodeHeight / 2;
+    const targetOffsets = { "gen-packets": -18, "server-manager": 0, "client-manager": 18 };
+    const endX = target.x;
+    const endY = target.y + nodeHeight / 2 + (edge.to === "runtime-contract" ? (targetOffsets[edge.from] || 0) : 0);
+    const branchIndex = { "gen-packets": 0, "server-manager": 1, "client-manager": 2 }[edge.to];
+    const mergeIndex = { "gen-packets": 0, "server-manager": 1, "client-manager": 2 }[edge.from];
+    const middleX = branchIndex !== undefined
+      ? startX + 34 + branchIndex * 38
+      : mergeIndex !== undefined
+        ? startX + 128 + mergeIndex * 24
+        : (startX + endX) / 2;
+    const labelX = branchIndex !== undefined
+      ? middleX
+      : mergeIndex !== undefined
+        ? startX + labelWidth / 2 + 14
+        : (startX + endX) / 2;
+    const labelY = branchIndex !== undefined
+      ? (startY + endY) / 2
+      : mergeIndex !== undefined
+        ? startY - 10
+        : endY - 8;
+    return {
+      path: `M ${startX} ${startY} H ${middleX} V ${endY} H ${endX}`,
+      labelX,
+      labelY,
+    };
+  }
+
+  function fitSvgText(value, maxWidth, fontSize) {
+    const text = String(value || "");
+    if (measureSvgText(text, fontSize) <= maxWidth) return text;
+    const ellipsis = "…";
+    let fitted = "";
+    for (const character of text) {
+      if (measureSvgText(fitted + character + ellipsis, fontSize) > maxWidth) break;
+      fitted += character;
+    }
+    return `${fitted.trimEnd()}${ellipsis}`;
+  }
+
+  function measureSvgText(value, fontSize) {
+    return [...String(value || "")].reduce((width, character) => {
+      if (/\s/.test(character)) return width + fontSize * .34;
+      if (/[\u1100-\u11ff\u2e80-\u9fff\uac00-\ud7af]/.test(character)) return width + fontSize;
+      if (/[A-Z0-9]/.test(character)) return width + fontSize * .66;
+      return width + fontSize * .56;
+    }, 0);
   }
 
   function flowEdgeLabel(label) {
@@ -970,17 +1021,30 @@
         </div>
       </section>
       <div class="source-uml-grid">
-        ${model.diagrams.map((diagram, index) => `<section class="panel source-uml-card">
+        ${model.diagrams.map((diagram, index) => {
+          const viewMode = state.sourceUmlViewModes[diagram.id] || "read";
+          const direction = state.sourceUmlDirections[diagram.id] || "auto";
+          return `<section class="panel source-uml-card">
           <div class="panel-header">
             <div><span class="eyebrow">${escapeHtml(diagram.group)}</span><h2>${escapeHtml(diagram.title)}</h2></div>
-            <button class="ghost-button" data-copy-source-uml="${attr(diagram.id)}">${state.sourceUmlCopyStatus === diagram.id ? "복사됨" : "복사"}</button>
+            <div class="source-uml-card-actions">
+              <div class="source-uml-toggle" aria-label="${attr(diagram.title)} 표시 크기">
+                <button class="chip ${viewMode === "read" ? "is-active" : ""}" data-source-uml-view="read" data-source-uml-id="${attr(diagram.id)}">읽기 보기</button>
+                <button class="chip ${viewMode === "fit" ? "is-active" : ""}" data-source-uml-view="fit" data-source-uml-id="${attr(diagram.id)}">전체 맞춤</button>
+              </div>
+              <div class="source-uml-toggle" aria-label="${attr(diagram.title)} 배치 방향">
+                ${["auto", "LR", "TB"].map(value => `<button class="chip ${direction === value ? "is-active" : ""}" data-source-uml-direction="${value}" data-source-uml-id="${attr(diagram.id)}">${value === "auto" ? "자동" : value}</button>`).join("")}
+              </div>
+              <button class="ghost-button" data-copy-source-uml="${attr(diagram.id)}">${state.sourceUmlCopyStatus === diagram.id ? "복사됨" : "복사"}</button>
+            </div>
           </div>
-          <div class="source-uml-render" data-source-uml-index="${index}"><div class="source-uml-loading">Mermaid 렌더링 중</div></div>
+          <div class="source-uml-render is-${viewMode}" data-source-uml-index="${index}" data-source-uml-id="${attr(diagram.id)}"><div class="source-uml-loading">Mermaid 렌더링 중</div></div>
           <details class="mermaid-details">
             <summary>Mermaid 코드</summary>
             <pre class="mermaid-code"><code>${escapeHtml(diagram.code)}</code></pre>
           </details>
-        </section>`).join("")}
+        </section>`;
+        }).join("")}
       </div>
       <section class="panel">
         <div class="panel-header"><h2>근거가 약한 관계 / 제외</h2><span class="muted">not drawn</span></div>
@@ -1020,17 +1084,36 @@
       if (!diagram) return;
       try {
         const renderId = `source-uml-mermaid-${diagram.id}-${++sourceUmlRenderSeq}`;
-        const result = await window.mermaid.render(renderId, diagram.code);
+        const direction = state.sourceUmlDirections[diagram.id] || "auto";
+        const result = await window.mermaid.render(renderId, sourceUmlRenderCode(diagram, direction));
         target.innerHTML = result.svg;
         const svg = target.querySelector("svg");
         if (svg) {
           svg.removeAttribute("height");
           svg.classList.add("source-uml-mermaid-svg");
+          const viewBox = svg.viewBox?.baseVal;
+          if (viewBox?.width) svg.style.setProperty("--source-uml-width", `${Math.ceil(viewBox.width)}px`);
         }
       } catch (error) {
         target.innerHTML = `<div class="empty-state">Mermaid 렌더링 실패: ${escapeHtml(error.message || error)}</div>`;
       }
     });
+  }
+
+  function sourceUmlRenderCode(diagram, directionMode) {
+    const direction = directionMode === "auto" ? sourceUmlPreferredDirection(diagram) : directionMode;
+    if (/^direction\s+(LR|TB)$/m.test(diagram.code)) return diagram.code.replace(/^direction\s+(LR|TB)$/m, `direction ${direction}`);
+    return diagram.code.replace(/^classDiagram\s*$/m, `classDiagram\ndirection ${direction}`);
+  }
+
+  function sourceUmlPreferredDirection(diagram) {
+    if (diagram.id === "overview") return "LR";
+    const parsed = parseMermaidClassDiagram(diagram.code);
+    const memberCount = parsed.classes.reduce((sum, item) => sum + item.members.length, 0);
+    const inheritanceRelations = parsed.relations.filter(item => ["--|>", "..|>"].includes(item.kind)).length;
+    if (parsed.classes.length >= 8 && memberCount <= parsed.classes.length * 1.5) return "LR";
+    if (inheritanceRelations >= 5 && parsed.classes.length >= 7) return "LR";
+    return "TB";
   }
 
   function copySourceUml(id) {
@@ -1701,7 +1784,7 @@ Program ..> PacketFormat : string templates`),
       </div>
       <div class="detail-grid">
         <section class="panel">
-          <div class="panel-header"><h2>메서드</h2><span class="muted">클릭하면 호출 탐색</span></div>
+          <div class="panel-header"><h2>메서드</h2><span class="muted">${methods.length} methods</span></div>
           <div class="method-access-groups">${renderMethodAccessGroups(methods)}</div>
         </section>
         <section class="panel">
@@ -1735,42 +1818,6 @@ Program ..> PacketFormat : string templates`),
     if (modifiers.has("protected") || modifiers.has("internal")) return "protected-internal";
     if (modifiers.has("private")) return "private";
     return "unknown";
-  }
-
-  function renderCalls() {
-    let method = methodById.get(state.selectedMethodId);
-    if (!method) {
-      const candidates = data.methods.filter(item => item.calls.length || item.calledBy.length)
-        .sort((a, b) => (b.calls.length + b.calledBy.length) - (a.calls.length + a.calledBy.length));
-      method = candidates[0];
-      state.selectedMethodId = method?.id || null;
-      if (method) state.selectedTypeId = method.typeId;
-    }
-    if (!method) { main.innerHTML = empty("호출 관계가 해석된 메서드가 없습니다."); return; }
-    const owner = typeById.get(method.typeId);
-    const unresolved = method.unresolvedCalls.length;
-    main.innerHTML = `
-      <header class="page-header">
-        <div>
-          <span class="eyebrow">CALL STACK EXPLORER</span>
-          <h1>${escapeHtml(owner?.name || "Unknown")}.${escapeHtml(method.name)}</h1>
-          <p class="subtitle">호출 대상과 역호출자를 최대 4단계까지 따라갑니다. 순환 경로는 반복 표시하지 않습니다.</p>
-          <div class="badge-row">${badge(`${method.calls.length} outbound`, "accent")}${badge(`${method.calledBy.length} inbound`)}${badge(`${unresolved} unresolved`, unresolved > 8 ? "medium" : "")}</div>
-        </div>
-        <div class="source-ref">${escapeHtml(method.file)}:${method.startLine}</div>
-      </header>
-      <section class="panel">
-        <div class="panel-header"><h2>현재 프레임</h2><button class="link-button" data-type-id="${attr(method.typeId)}">소유 타입 보기</button></div>
-        <div class="method-item is-selected"><div><div class="method-signature">${escapeHtml(method.signature)}</div><div class="method-meta">returns ${escapeHtml(method.returnType)} · ${method.sourceLines} lines</div></div></div>
-      </section>
-      <div class="call-columns">
-        <section class="panel"><div class="panel-header"><h2>호출 대상</h2><span class="muted">outbound</span></div>${renderCallTree(method.id, "calls")}</section>
-        <section class="panel"><div class="panel-header"><h2>역호출자</h2><span class="muted">inbound</span></div>${renderCallTree(method.id, "calledBy")}</section>
-      </div>
-      <section class="panel">
-        <div class="panel-header"><h2>해석되지 않은 호출 이름</h2><span class="muted">프레임워크 API, 체인 호출, 동적 바인딩 포함</span></div>
-        <div class="badge-row">${method.unresolvedCalls.slice(0, 80).map(name => badge(name)).join("") || '<span class="muted">없음</span>'}</div>
-      </section>`;
   }
 
   function renderDiagnostics() {
@@ -1890,14 +1937,12 @@ Program ..> PacketFormat : string templates`),
     }
     const type = typeById.get(state.selectedTypeId);
     if (!type) return;
-    const method = methodById.get(state.selectedMethodId);
     const outgoing = (outgoingByType.get(type.id) || []).filter(relation => relationEndpointVisible(relation.targetId));
     const incoming = (incomingByType.get(type.id) || []).filter(relation => relationEndpointVisible(relation.sourceId));
     const diagnostics = diagnosticsByType.get(type.id) || [];
     const diagnosticPrinciples = [...new Set(diagnostics.map(item => item.principle))];
     contextPanel.innerHTML = `
       <section class="context-card"><span class="eyebrow">PINNED TYPE</span><h3>${escapeHtml(type.name)}</h3><p>${escapeHtml(type.file)}:${type.startLine}</p><div class="badge-row">${badge(type.kind)}${badge(type.layer, "accent")}</div></section>
-      ${method ? `<section class="context-card"><span class="eyebrow">PINNED METHOD</span><h3>${escapeHtml(method.name)}</h3><p>${escapeHtml(method.signature)}</p><button class="link-button" data-method-id="${attr(method.id)}">호출 트리 열기</button></section>` : ""}
       <section class="context-card"><h3>나가는 관계</h3><div class="context-list">${outgoing.slice(0, 9).map(relation => contextRelation(relation, "out")).join("") || `<p>없음</p>`}</div></section>
       <section class="context-card"><h3>들어오는 관계</h3><div class="context-list">${incoming.slice(0, 9).map(relation => contextRelation(relation, "in")).join("") || `<p>없음</p>`}</div></section>
       <section class="context-card"><h3>검토 신호 요약</h3><p>${diagnostics.length ? `${diagnostics.length}개 · ${escapeHtml(diagnosticPrinciples.join(" · "))}` : "현재 신호 없음"}</p><button class="link-button" data-diagnostic-type="${attr(type.id)}">진단 탭에서 확인</button></section>`;
@@ -2044,14 +2089,21 @@ Program ..> PacketFormat : string templates`),
       generation: {
         ...base, id: "generation", title: "패킷 생성", kicker: "PACKET GENERATOR",
         description: "PacketGenerator가 PDL.xml을 읽고 Shared 패킷 계약과 양쪽 packet manager 코드를 생성하는 흐름입니다.",
+        layout: "generation",
+        phases: [
+          { title: "1 · SCHEMA", x: 190, width: 190 },
+          { title: "2 · GENERATOR", x: 500, width: 500 },
+          { title: "3 · ARTIFACTS", x: 1150, width: 190 },
+          { title: "4 · RUNTIME", x: 1580, width: 190 },
+        ],
         nodes: [
-          node("pdl", "PDL.xml", "packet schema", "tool", 68, "Tool", "패킷 이름, 필드, 리스트 구조를 XML 계약으로 정의합니다.", ["PDL.xml", "schema"], "intent"),
-          node("program", "Program.Main", "parse + emit", "tool", 292, "Tool", "XmlReader로 packet/member/list를 순회하고 생성 문자열을 조립합니다.", ["ParsePacket", "ParseMembers"], "authority"),
-          node("format", "PacketFormat", "template catalog", "tool", 516, "Tool", "packet, enum, manager, read/write 템플릿을 한곳에서 제공합니다.", ["packetFormat", "managerFormat"]),
-          node("gen-packets", "GenPackets.cs", "shared contract", "contract", 740, "Shared", "양쪽 런타임이 함께 쓰는 PacketID, IPacket, read/write 코드를 생성합니다.", ["98_Shared/Protocol/Generated"], "result"),
-          node("server-manager", "ServerPacketManager", "server dispatch", "server", 964, "Server", "서버 handler 등록 코드를 생성해 수신 패킷을 게임 로직으로 연결합니다.", ["GameServer/Network/Generated"], "result"),
-          node("client-manager", "ClientPacketManager", "client dispatch", "transport", 1188, "ClientNet", "클라이언트 packet manager를 생성해 wire 패킷을 클라이언트 처리기로 연결합니다.", ["04_ClientNet/Generated"], "result"),
-          node("runtime-contract", "런타임 계약", "same packet IDs", "client", 1412, "Client", "Client와 Server가 같은 Shared 계약과 manager 출력을 기준으로 통신합니다.", ["PacketID", "wire compatibility"], "result"),
+          node("pdl", "PDL.xml", "packet schema", "tool", 190, "Tool", "패킷 이름, 필드, 리스트 구조를 XML 계약으로 정의합니다.", ["PDL.xml", "schema"], "intent"),
+          node("program", "Program.Main", "parse XML", "tool", 500, "Tool", "XmlReader로 packet/member/list를 순회하고 생성 대상을 구성합니다.", ["ParsePacket", "ParseMembers"], "authority"),
+          node("format", "PacketFormat", "apply templates", "tool", 810, "Tool", "packet, enum, manager, read/write 템플릿을 적용해 세 산출물을 병렬 생성합니다.", ["packetFormat", "managerFormat"], "authority"),
+          node("gen-packets", "GenPackets.cs", "PacketID · IPacket", "contract", 1150, "Shared", "양쪽 런타임이 함께 쓰는 패킷 ID와 read/write 계약입니다.", ["98_Shared/Protocol/Generated"], "result"),
+          node("server-manager", "ServerPacketManager", "server dispatch", "server", 1150, "Server", "서버 수신 패킷을 등록된 game handler로 분배하는 생성 코드입니다.", ["GameServer/Network/Generated"], "result"),
+          node("client-manager", "ClientPacketManager", "client dispatch", "transport", 1150, "ClientNet", "ClientNet 수신 패킷을 클라이언트 세션 처리로 분배하는 생성 코드입니다.", ["04_ClientNet/Generated"], "result"),
+          node("runtime-contract", "동일 PacketID 호환", "shared wire contract", "contract", 1580, "Client + Server", "Client와 Server가 같은 PacketID와 직렬화 규칙을 사용해야 통신이 성립합니다.", ["PacketID", "wire compatibility"], "result"),
         ],
         edges: [
           { from: "pdl", to: "program", label: "read", tone: "intent" },
@@ -2082,22 +2134,6 @@ Program ..> PacketFormat : string templates`),
     return [...counts.entries()].map(([kind, count]) => ({ kind, count })).sort((a, b) => b.count - a.count);
   }
 
-  function renderCallTree(rootId, direction) {
-    const root = methodById.get(rootId);
-    const children = root?.[direction] || [];
-    if (!children.length) return empty(direction === "calls" ? "해석된 호출 대상이 없습니다." : "해석된 역호출자가 없습니다.");
-    const branch = (methodId, depth, visited) => {
-      const method = methodById.get(methodId);
-      if (!method) return "";
-      const owner = typeById.get(method.typeId);
-      const cycle = visited.has(methodId);
-      const nextVisited = new Set(visited); nextVisited.add(methodId);
-      const next = cycle || depth >= 4 ? [] : method[direction];
-      return `<li><button class="call-node" data-method-id="${attr(method.id)}"><b>${escapeHtml(owner?.name || "?")}.${escapeHtml(method.name)}</b><span>${escapeHtml(method.signature)}${cycle ? " · cycle" : ""}</span></button>${next.length ? `<ul>${next.slice(0, 12).map(id => branch(id, depth + 1, nextVisited)).join("")}</ul>` : ""}</li>`;
-    };
-    return `<ul class="call-tree">${children.slice(0, 16).map(id => branch(id, 1, new Set([rootId]))).join("")}</ul>`;
-  }
-
   function relationItem(relation, direction) {
     const targetId = direction === "out" ? relation.targetId : relation.sourceId;
     const target = typeById.get(targetId);
@@ -2111,7 +2147,7 @@ Program ..> PacketFormat : string templates`),
   }
 
   function methodItem(method) {
-    return `<div class="method-item ${method.id === state.selectedMethodId ? "is-selected" : ""}" data-method-id="${attr(method.id)}"><div><div class="method-signature">${escapeHtml(method.signature)}</div><div class="method-meta">${method.sourceLines} lines · ${method.calls.length} calls · ${method.calledBy.length} callers</div></div><span class="relation-kind">trace</span></div>`;
+    return `<div class="method-item"><div><div class="method-signature">${escapeHtml(method.signature)}</div><div class="method-meta">returns ${escapeHtml(method.returnType)} · ${method.sourceLines} lines</div></div></div>`;
   }
 
   function diagnosticCard(item) {

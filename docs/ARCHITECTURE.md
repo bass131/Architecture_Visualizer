@@ -16,7 +16,7 @@ C:\Dev\ClaudeDev (*.cs and domain docs, external read-only input)
 - `analysis-config.json`: 범위와 임계값
 - `architecture-data.js`: 분석기와 UI 사이의 버전 계약
 - `_index.html`: 화면 골격과 접근성
-- `app.js`: 탐색 상태, 그래프, 호출 트리 렌더링
+- `app.js`: 탐색 상태, 관계 그래프, 다이어그램 렌더링
 - `styles.css`: 시각 체계
 - `refresh.ps1`: 빌드, 분석, 검증 오케스트레이션
 

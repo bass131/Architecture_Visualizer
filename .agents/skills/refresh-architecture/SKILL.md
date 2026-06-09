@@ -20,8 +20,7 @@ description: Synchronize the DawnHolder Architecture Atlas with the read-only Cl
    - overview: project and diagnostic summaries;
    - class map: selected type and direct incoming/outgoing relations;
    - explorer: members, local relations, and diagnostic context;
-   - diagnostics: severity, principle, evidence, and source links;
-   - calls: method ownership, calls, and callers.
+   - diagnostics: severity, principle, evidence, and source links.
 9. Treat these `assets/app.js` models as curated source-backed views, not automatic projections of `architecture-data.js`:
    - `createFlowScenarios()` for **전체 흐름**;
    - `createSystemArchitectureDiagram()` and `formatArchitectureSource()` for **전체 구조도**;
