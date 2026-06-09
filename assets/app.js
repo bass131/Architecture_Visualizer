@@ -1070,7 +1070,7 @@
       </section>
       <div class="source-uml-grid">
         ${model.diagrams.map((diagram, index) => {
-          const viewMode = state.sourceUmlViewModes[diagram.id] || "read";
+          const viewMode = state.sourceUmlViewModes[diagram.id] || "fit";
           const direction = state.sourceUmlDirections[diagram.id] || "auto";
           return `<section class="panel source-uml-card">
           <div class="panel-header">
