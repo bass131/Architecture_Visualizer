@@ -52,7 +52,6 @@
     classArea: "client",
     classSelectedTypeId: null,
     classRelationKind: "all",
-    classLimit: 16,
     classZoom: 1,
     localRelationKind: "all",
     localRelationPage: 0,
@@ -251,12 +250,6 @@
     const classKindTarget = event.target.closest("[data-class-kind]");
     if (classKindTarget) {
       state.classRelationKind = classKindTarget.dataset.classKind;
-      render();
-      return;
-    }
-    const classLimitTarget = event.target.closest("[data-class-limit]");
-    if (classLimitTarget) {
-      state.classLimit = Number(classLimitTarget.dataset.classLimit);
       render();
       return;
     }
@@ -490,10 +483,11 @@
           ${model.channels.map(channel => `<div class="architecture-intent-item ${attr(channel.tone)}"><span>${channel.number}</span><div><b>${escapeHtml(channel.title)}</b><small>${escapeHtml(channel.detail)}</small></div></div>`).join("")}
         </div>
       </section>
-      <section class="panel">
-        <div class="panel-header"><h2>구조도 원문</h2><button class="ghost-button" data-copy-architecture>${escapeHtml(copyLabel)}</button></div>
+      <details class="panel architecture-source-details">
+        <summary><span><span class="eyebrow">MERMAID SOURCE</span><b>구조도 원문</b></span><span class="architecture-source-summary">열어서 보기</span></summary>
+        <div class="architecture-source-actions"><p>외부 문서나 PR 설명에 사용할 수 있는 Mermaid flowchart 원문입니다.</p><button class="ghost-button" data-copy-architecture>${escapeHtml(copyLabel)}</button></div>
         <pre class="architecture-source"><code>${escapeHtml(source)}</code></pre>
-      </section>`;
+      </details>`;
   }
 
   function renderFlow() {
@@ -769,18 +763,15 @@
     const ranked = [...areaTypes].sort((a, b) => classTypeScore(b) - classTypeScore(a) || a.name.localeCompare(b.name));
     if (!state.classSelectedTypeId || !areaIds.has(state.classSelectedTypeId)) state.classSelectedTypeId = ranked[0]?.id || null;
     const selected = typeById.get(state.classSelectedTypeId);
-    const visibleTypes = selectClassDiagramTypes(selected, ranked, relations, state.classLimit);
-    const visibleIds = new Set(visibleTypes.map(type => type.id));
-    const visibleRelations = relations.filter(relation => visibleIds.has(relation.sourceId) && visibleIds.has(relation.targetId))
-      .sort((a, b) => classRelationPriority(b, selected?.id) - classRelationPriority(a, selected?.id))
-      .slice(0, 42)
-      .sort((a, b) => classRelationPriority(a, selected?.id) - classRelationPriority(b, selected?.id));
     const kinds = relationKinds(allRelations);
-    const selectedRelations = relations.filter(relation => relation.sourceId === selected?.id || relation.targetId === selected?.id);
+    const selectedRelations = relations
+      .filter(relation => relation.sourceId === selected?.id || relation.targetId === selected?.id)
+      .sort((a, b) => classRelationKindOrder(a.kind) - classRelationKindOrder(b.kind)
+        || classRelationOtherName(a, selected?.id).localeCompare(classRelationOtherName(b, selected?.id)));
 
     main.innerHTML = `
       <header class="page-header">
-        <div><span class="eyebrow">CLASS DIAGRAM</span><h1>영역별 클래스 맵</h1><p class="subtitle">네임스페이스를 UML 패키지처럼 묶고 패키지 사이 의존성만 점선으로 표시합니다. 선택 타입이 포함된 패키지와 직접 관계가 있는 패키지를 우선 강조합니다.</p></div>
+        <div><span class="eyebrow">CLASS DIAGRAM</span><h1>영역별 클래스 맵</h1><p class="subtitle">선택한 타입을 중심으로 바로 연결된 클래스만 표시합니다. 들어오는 관계와 나가는 관계를 분리하고, 관계 유형별 직교 배선으로 흐름을 정리합니다.</p></div>
         <div class="source-ref">${areaTypes.length} types · ${allRelations.length} internal relations</div>
       </header>
       <div class="class-toolbar">
@@ -789,7 +780,6 @@
         </div>
         <div class="diagram-actions">
           <div class="zoom-controls" aria-label="클래스 다이어그램 확대 축소"><button class="ghost-button" data-class-zoom="-.1" aria-label="축소">−</button><span>${Math.round(state.classZoom * 100)}%</span><button class="ghost-button" data-class-zoom=".1" aria-label="확대">+</button></div>
-          <div class="class-limit-controls" aria-label="표시 타입 개수">${[12, 16, 20].map(limit => `<button class="chip ${state.classLimit === limit ? "is-active" : ""}" data-class-limit="${limit}">${limit}개</button>`).join("")}</div>
         </div>
       </div>
       <div class="class-kind-toolbar" aria-label="클래스 관계 종류">
@@ -798,7 +788,7 @@
       </div>
       <section class="panel diagram-panel">
         <div class="diagram-heading"><div><span class="eyebrow">${escapeHtml(area.kicker)}</span><h2>${escapeHtml(area.title)}</h2></div><p>${escapeHtml(area.description)}</p></div>
-        <div class="diagram-scroll">${renderClassDiagram(visibleTypes, visibleRelations, selected?.id, state.classZoom)}</div>
+        <div class="diagram-scroll">${renderClassDiagram(selected, selectedRelations, state.classZoom)}</div>
       </section>
       <div class="flow-detail-grid">
         <section class="panel selected-step-panel">
@@ -807,220 +797,142 @@
         </section>
         <section class="panel">
           <div class="panel-header"><h2>선택 타입 관계</h2><span class="muted">${selectedRelations.length} relations</span></div>
-          <div class="class-relation-list">${selectedRelations.slice(0, 16).map(relation => classRelationItem(relation, selected.id)).join("") || empty("선택한 조건의 직접 관계가 없습니다.")}</div>
+          <div class="class-relation-groups">${renderClassRelationGroups(selectedRelations, selected?.id)}</div>
         </section>
       </div>`;
   }
 
-  function renderClassDiagram(types, relations, selectedTypeId, zoom) {
-    const layout = buildClassPackageLayout(types, relations, selectedTypeId);
-    const { packages, packageRelations, width, height } = layout;
-    const edges = packageRelations.map((relation, index) => {
-      const source = packages.find(item => item.id === relation.sourcePackageId);
-      const target = packages.find(item => item.id === relation.targetPackageId);
-      if (!source || !target) return "";
-      const path = classPackageEdgePath(source, target, index);
-      const focusClass = relation.isFocused ? "is-focused" : "";
-      return `<g class="class-package-edge ${attr(relation.primaryKind)} ${focusClass}">
-        <path d="${path}" marker-end="url(#class-arrow-${attr(relation.primaryKind)})"></path>
-        <text x="${relation.labelX}" y="${relation.labelY}">${relation.count}</text>
-      </g>`;
-    }).join("");
-    return `<svg class="class-diagram" style="width:${Math.round(width * zoom)}px" viewBox="0 0 ${width} ${height}" role="group" aria-label="영역별 클래스 다이어그램">
+  function renderClassDiagram(selected, relations, zoom) {
+    if (!selected) return empty("표시할 타입이 없습니다.");
+    const layout = buildLocalClassLayout(selected, relations);
+    const { nodes, bundles, width, height } = layout;
+    return `<svg class="class-diagram" style="width:${Math.round(width * zoom)}px" viewBox="0 0 ${width} ${height}" role="group" aria-label="${attr(selected.name)} 직접 관계 클래스 다이어그램">
       <defs>
         <pattern id="class-grid" width="20" height="20" patternUnits="userSpaceOnUse"><path d="M 20 0 L 0 0 0 20" class="diagram-grid-line"></path></pattern>
-        ${["inherits", "implements", "uses", "creates", "calls"].map(kind => `<marker id="class-arrow-${kind}" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6"></polygon></marker>`).join("")}
+        ${["inherits", "implements", "uses", "creates", "calls"].map(kind => `<marker id="class-arrow-${kind}" markerWidth="9" markerHeight="8" refX="8" refY="4" orient="auto"><path d="M 0 0 L 8 4 L 0 8 Z"></path></marker>`).join("")}
       </defs>
       <rect class="diagram-grid-bg" width="100%" height="100%"></rect>
-      <g class="class-edges">${edges}</g>
-      ${packages.map(item => classPackageNode(item, selectedTypeId)).join("")}
+      <text class="class-column-heading" x="48" y="34">INCOMING</text>
+      <text class="class-column-heading center" x="${width / 2}" y="34">SELECTED TYPE</text>
+      <text class="class-column-heading end" x="${width - 48}" y="34">OUTGOING</text>
+      <g class="class-edges">${bundles.map(classRelationBundle).join("")}</g>
+      ${nodes.map(classTypeNode).join("")}
     </svg>`;
   }
 
-  function buildClassPackageLayout(types, relations, selectedTypeId) {
-    const packages = buildClassPackages(types);
-    const packageByTypeId = new Map(packages.flatMap(item => item.types.map(type => [type.id, item.id])));
-    const packageRelations = aggregatePackageRelations(relations, packageByTypeId, selectedTypeId);
-    const selectedPackageId = packageByTypeId.get(selectedTypeId);
-    packages.forEach(item => {
-      item.isSelected = item.id === selectedPackageId;
-      item.isFocused = item.isSelected || packageRelations.some(relation => relation.isFocused && (relation.sourcePackageId === item.id || relation.targetPackageId === item.id));
-      item.internalRelationCount = relations.filter(relation => packageByTypeId.get(relation.sourceId) === item.id && packageByTypeId.get(relation.targetId) === item.id).length;
-    });
-    packages.sort((a, b) => Number(b.isSelected) - Number(a.isSelected)
-      || Number(b.isFocused) - Number(a.isFocused)
-      || b.score - a.score
-      || a.name.localeCompare(b.name));
-
-    const packageWidth = 286, gapX = 84, gapY = 82, marginX = 54, marginY = 48, columns = 3;
-    const rows = Math.max(1, Math.ceil(packages.length / columns));
-    const rowHeights = Array.from({ length: rows }, (_, row) =>
-      Math.max(...packages.slice(row * columns, row * columns + columns).map(item => item.height), 214));
-    const rowY = rowHeights.reduce((positions, height, row) => {
-      positions.push(row ? positions[row - 1] + rowHeights[row - 1] + gapY : marginY);
-      return positions;
-    }, []);
-    packages.forEach((item, index) => {
-      const row = Math.floor(index / columns);
-      const column = index % columns;
-      item.x = marginX + column * (packageWidth + gapX);
-      item.y = rowY[row];
-      item.width = packageWidth;
-      item.row = row;
-      item.column = column;
-    });
-    const width = marginX * 2 + columns * packageWidth + (columns - 1) * gapX;
-    const height = marginY + rowY.at(-1) + rowHeights.at(-1);
-    packageRelations.forEach((relation, index) => {
-      const source = packages.find(item => item.id === relation.sourcePackageId);
-      const target = packages.find(item => item.id === relation.targetPackageId);
-      if (!source || !target) return;
-      const sourceCenterY = source.y + source.height / 2;
-      const targetCenterY = target.y + target.height / 2;
-      relation.labelX = (source.x + target.x + packageWidth) / 2 + ((index % 3) - 1) * 16;
-      relation.labelY = source.row === target.row
-        ? (sourceCenterY + targetCenterY) / 2 - 8
-        : Math.min(source.y, target.y) + Math.abs(source.y - target.y) / 2 + 8;
-    });
-    return { packages, packageRelations, width, height };
-  }
-
-  function buildClassPackages(types) {
-    const groups = groupBy(types, classPackageKey);
-    return [...groups.entries()].map(([name, packageTypes]) => {
-      const sortedTypes = [...packageTypes].sort(compareClassTypes);
-      const typeGroups = [
-        { key: "interface", label: "interface", types: sortedTypes.filter(type => type.kind === "interface") },
-        { key: "class", label: "class / record", types: sortedTypes.filter(type => ["class", "record"].includes(type.kind)) },
-        { key: "value", label: "struct / enum", types: sortedTypes.filter(type => ["struct", "record-struct", "enum"].includes(type.kind)) },
-        { key: "other", label: "other", types: sortedTypes.filter(type => !["interface", "class", "record", "struct", "record-struct", "enum"].includes(type.kind)) },
-      ].filter(group => group.types.length);
-      const visibleRows = typeGroups.reduce((count, group) => count + 1 + Math.min(group.types.length, 4), 0);
-      return {
-        id: `pkg:${name}`,
-        name,
-        types: sortedTypes,
-        typeGroups,
-        score: sortedTypes.reduce((sum, type) => sum + classTypeScore(type), 0),
-        height: Math.max(214, 78 + visibleRows * 17),
-      };
-    });
-  }
-
-  function classPackageKey(type) {
-    return type.namespace || type.folder || type.layer || "Unknown";
-  }
-
-  function aggregatePackageRelations(relations, packageByTypeId, selectedTypeId) {
-    const selectedPackageId = packageByTypeId.get(selectedTypeId);
-    const grouped = new Map();
-    relations.forEach(relation => {
-      const sourcePackageId = packageByTypeId.get(relation.sourceId);
-      const targetPackageId = packageByTypeId.get(relation.targetId);
-      if (!sourcePackageId || !targetPackageId || sourcePackageId === targetPackageId) return;
-      const key = `${sourcePackageId}->${targetPackageId}`;
-      const item = grouped.get(key) || {
-        sourcePackageId,
-        targetPackageId,
-        count: 0,
-        kindCounts: new Map(),
-        isFocused: false,
-      };
-      item.count += 1;
-      item.kindCounts.set(relation.kind, (item.kindCounts.get(relation.kind) || 0) + 1);
-      item.isFocused ||= relation.sourceId === selectedTypeId || relation.targetId === selectedTypeId || sourcePackageId === selectedPackageId || targetPackageId === selectedPackageId;
-      grouped.set(key, item);
-    });
-    return [...grouped.values()]
-      .sort((a, b) => Number(b.isFocused) - Number(a.isFocused) || b.count - a.count || a.sourcePackageId.localeCompare(b.sourcePackageId) || a.targetPackageId.localeCompare(b.targetPackageId))
-      .slice(0, 32)
-      .map(item => ({
-        ...item,
-        primaryKind: [...item.kindCounts.entries()].sort((a, b) => b[1] - a[1] || classRelationKindOrder(a[0]) - classRelationKindOrder(b[0]))[0]?.[0] || "uses",
-      }));
+  function buildLocalClassLayout(selected, relations) {
+    const width = 1220, nodeWidth = 250, nodeHeight = 66, gapY = 20, top = 66;
+    const incoming = classRelationNodes(relations, selected.id, "in");
+    const outgoing = classRelationNodes(relations, selected.id, "out");
+    const rows = Math.max(incoming.length, outgoing.length, 1);
+    const height = Math.max(300, top + rows * (nodeHeight + gapY) + 26);
+    const selectedNode = { type: selected, x: (width - nodeWidth) / 2, y: (height - nodeHeight) / 2, width: nodeWidth, height: nodeHeight, selected: true };
+    const place = (items, x) => items.map((item, index) => ({ ...item, x, y: top + index * (nodeHeight + gapY), width: nodeWidth, height: nodeHeight }));
+    const incomingNodes = place(incoming, 48);
+    const outgoingNodes = place(outgoing, width - nodeWidth - 48);
+    const nodeByKey = new Map([...incomingNodes, ...outgoingNodes].map(node => [`${node.direction}:${node.type.id}`, node]));
+    const bundles = buildClassRelationBundles(relations, selected, selectedNode, nodeByKey);
+    return { nodes: [...incomingNodes, selectedNode, ...outgoingNodes], bundles, width, height };
   }
 
   function classRelationKindOrder(kind) {
     return ({ inherits: 0, implements: 1, creates: 2, calls: 3, uses: 4 }[kind] ?? 9);
   }
 
-  function compareClassTypes(a, b) {
-    return typeKindOrder(a.kind) - typeKindOrder(b.kind)
-      || a.name.localeCompare(b.name);
+  function classRelationNodes(relations, selectedTypeId, direction) {
+    const grouped = new Map();
+    relations.filter(relation => direction === "in" ? relation.targetId === selectedTypeId : relation.sourceId === selectedTypeId).forEach(relation => {
+      const otherId = direction === "in" ? relation.sourceId : relation.targetId;
+      const item = grouped.get(otherId) || { type: typeById.get(otherId), direction, kinds: new Set() };
+      item.kinds.add(relation.kind);
+      grouped.set(otherId, item);
+    });
+    return [...grouped.values()].filter(item => item.type).sort((a, b) =>
+      Math.min(...[...a.kinds].map(classRelationKindOrder)) - Math.min(...[...b.kinds].map(classRelationKindOrder))
+      || a.type.name.localeCompare(b.type.name));
   }
 
-  function classPackageNode(item, selectedTypeId) {
-    let cursorY = 64;
-    const typeRows = item.typeGroups.map(group => {
-      const heading = `<text class="class-package-kind" x="14" y="${cursorY}">${escapeHtml(group.label)} · ${group.types.length}</text>`;
-      cursorY += 17;
-      const rows = group.types.slice(0, 4).map(type => {
-        const selected = type.id === selectedTypeId;
-        const row = `<g class="class-package-type ${selected ? "is-selected" : ""} ${attr(type.kind)}" data-class-type-id="${attr(type.id)}" tabindex="0" role="button" aria-label="${attr(type.name)}">
-          <rect x="12" y="${cursorY - 12}" width="${item.width - 24}" height="15" rx="3"></rect>
-          <text x="20" y="${cursorY}">${escapeHtml(truncate(type.name, 28))}</text>
-          <text class="class-package-type-meta" x="${item.width - 18}" y="${cursorY}">${type.fanIn}/${type.fanOut}</text>
-        </g>`;
-        cursorY += 17;
-        return row;
-      }).join("");
-      if (group.types.length > 4) cursorY += 4;
-      const more = group.types.length > 4 ? `<text class="class-package-more" x="20" y="${cursorY - 2}">+ ${group.types.length - 4} more</text>` : "";
-      return heading + rows + more;
+  function buildClassRelationBundles(relations, selected, selectedNode, nodeByKey) {
+    const groups = groupBy(relations, relation => `${relation.targetId === selected.id ? "in" : "out"}:${relation.kind}`);
+    return [...groups.entries()].map(([key, items]) => {
+      const [direction, kind] = key.split(":");
+      const kindIndex = classRelationKindOrder(kind);
+      const busX = direction === "in"
+        ? selectedNode.x - 38 - kindIndex * 24
+        : selectedNode.x + selectedNode.width + 38 + kindIndex * 24;
+      const selectedY = selectedNode.y + 20 + kindIndex * 7;
+      const branches = items.map(relation => {
+        const otherId = direction === "in" ? relation.sourceId : relation.targetId;
+        const node = nodeByKey.get(`${direction}:${otherId}`);
+        if (!node) return null;
+        const kinds = [...node.kinds].sort((a, b) => classRelationKindOrder(a) - classRelationKindOrder(b));
+        const portOffset = (kinds.indexOf(kind) - (kinds.length - 1) / 2) * 8;
+        return { node, y: node.y + node.height / 2 + portOffset };
+      }).filter(Boolean);
+      const ys = [selectedY, ...branches.map(branch => branch.y)];
+      return {
+        direction,
+        kind,
+        busX,
+        selectedX: direction === "in" ? selectedNode.x : selectedNode.x + selectedNode.width,
+        selectedY,
+        branches,
+        top: Math.min(...ys),
+        bottom: Math.max(...ys),
+      };
+    }).sort((a, b) => a.direction.localeCompare(b.direction) || classRelationKindOrder(a.kind) - classRelationKindOrder(b.kind));
+  }
+
+  function classRelationBundle(bundle) {
+    const trunkMarker = bundle.direction === "in" ? ` marker-end="url(#class-arrow-${attr(bundle.kind)})"` : "";
+    const branches = bundle.branches.map(branch => {
+      const nodeX = bundle.direction === "in" ? branch.node.x + branch.node.width : branch.node.x;
+      const marker = bundle.direction === "out" ? ` marker-end="url(#class-arrow-${attr(bundle.kind)})"` : "";
+      return `<path class="class-relation-branch" d="M ${bundle.busX} ${branch.y} H ${nodeX}"${marker}></path><circle cx="${bundle.busX}" cy="${branch.y}" r="2.5"></circle>`;
     }).join("");
-    return `<g class="class-package ${item.isSelected ? "is-selected" : ""} ${item.isFocused ? "is-focused" : ""}" transform="translate(${item.x} ${item.y})">
-      <path class="class-package-shell" d="M 0 24 H 92 L 106 0 H ${item.width} V ${item.height} H 0 Z"></path>
-      <path class="class-package-tab" d="M 0 24 H 92 L 106 0 H ${Math.min(item.width - 18, 210)} V 24 Z"></path>
-      <text class="class-package-title" x="14" y="19">${escapeHtml(truncate(item.name, 35))}</text>
-      <text class="class-package-meta" x="14" y="45">${item.types.length} types · ${item.internalRelationCount || 0} internal relations</text>
-      ${typeRows}
+    const labelX = (bundle.busX + bundle.selectedX) / 2;
+    return `<g class="class-relation-edge ${attr(bundle.kind)} ${bundle.direction}">
+      <path class="class-relation-bus" d="M ${bundle.busX} ${bundle.top} V ${bundle.bottom}"></path>
+      <path class="class-relation-trunk" d="M ${bundle.direction === "in" ? bundle.busX : bundle.selectedX} ${bundle.selectedY} H ${bundle.direction === "in" ? bundle.selectedX : bundle.busX}"${trunkMarker}></path>
+      ${branches}
+      <text x="${labelX}" y="${bundle.selectedY - 8}">${escapeHtml(bundle.kind)}</text>
     </g>`;
   }
 
-  function classPackageEdgePath(source, target, edgeIndex) {
-    const sourceRight = source.x + source.width;
-    const targetRight = target.x + target.width;
-    const sourceCenterX = source.x + source.width / 2;
-    const targetCenterX = target.x + target.width / 2;
-    const sourceCenterY = source.y + source.height / 2;
-    const targetCenterY = target.y + target.height / 2;
-    const sameRow = source.row === target.row;
-    const leftToRight = source.column <= target.column;
-    const laneOffset = ((edgeIndex % 5) - 2) * 9;
-    if (sameRow) {
-      const sourceX = leftToRight ? sourceRight : source.x;
-      const targetX = leftToRight ? target.x : targetRight;
-      const midX = (sourceX + targetX) / 2 + laneOffset;
-      return `M ${sourceX} ${sourceCenterY} H ${midX} V ${targetCenterY} H ${targetX}`;
-    }
-    const down = source.row < target.row;
-    const sourceY = down ? source.y + source.height : source.y;
-    const targetY = down ? target.y : target.y + target.height;
-    const midY = (sourceY + targetY) / 2 + laneOffset;
-    return `M ${sourceCenterX} ${sourceY} V ${midY} H ${targetCenterX} V ${targetY}`;
+  function classTypeNode(node) {
+    const type = node.type;
+    const kindSummary = node.selected ? "focus" : [...node.kinds].sort((a, b) => classRelationKindOrder(a) - classRelationKindOrder(b)).join(" · ");
+    return `<g class="class-type-node ${node.selected ? "is-selected" : ""} ${attr(type.kind)}" transform="translate(${node.x} ${node.y})" data-class-type-id="${attr(type.id)}" tabindex="0" role="button" aria-label="${attr(type.name)}">
+      <rect width="${node.width}" height="${node.height}" rx="5"></rect>
+      <line x1="0" y1="25" x2="${node.width}" y2="25"></line>
+      <text class="class-type-stereotype" x="12" y="17">${escapeHtml(type.kind)}</text>
+      <text class="class-type-name" x="12" y="43">${escapeHtml(truncate(type.name, 29))}</text>
+      <text class="class-type-meta" x="12" y="57">${escapeHtml(truncate(type.namespace || type.folder || type.layer, 38))}</text>
+      <text class="class-type-kinds" x="${node.width - 12}" y="17">${escapeHtml(kindSummary)}</text>
+    </g>`;
   }
 
-  function selectClassDiagramTypes(selected, ranked, relations, limit) {
-    if (!selected) return ranked.slice(0, limit);
-    const relationCounts = new Map();
-    relations.forEach(relation => {
-      if (relation.sourceId === selected.id) relationCounts.set(relation.targetId, (relationCounts.get(relation.targetId) || 0) + 1);
-      if (relation.targetId === selected.id) relationCounts.set(relation.sourceId, (relationCounts.get(relation.sourceId) || 0) + 1);
-    });
-    const neighbors = [...relationCounts.entries()].sort((a, b) => b[1] - a[1] || classTypeScore(typeById.get(b[0])) - classTypeScore(typeById.get(a[0]))).map(([id]) => typeById.get(id));
-    const result = [selected, ...neighbors];
-    ranked.forEach(type => { if (!result.some(item => item.id === type.id)) result.push(type); });
-    return result.slice(0, limit);
+  function renderClassRelationGroups(relations, selectedTypeId) {
+    if (!relations.length) return empty("선택한 조건의 직접 관계가 없습니다.");
+    const groups = groupBy(relations, relation => relation.kind);
+    return [...groups.entries()].sort(([a], [b]) => classRelationKindOrder(a) - classRelationKindOrder(b)).map(([kind, items]) => `
+      <section class="class-relation-group ${attr(kind)}">
+        <header><span class="class-relation-swatch"></span><b>${escapeHtml(kind)}</b><small>${items.length}</small></header>
+        <div class="class-relation-list">${items.map(relation => classRelationItem(relation, selectedTypeId)).join("")}</div>
+      </section>`).join("");
   }
 
   function classRelationItem(relation, selectedTypeId) {
     const outgoing = relation.sourceId === selectedTypeId;
     const other = typeById.get(outgoing ? relation.targetId : relation.sourceId);
-    return `<button class="class-relation-item" data-class-type-id="${attr(other?.id || "")}"><span>${outgoing ? "OUT" : "IN"}</span><b>${escapeHtml(relation.kind)}</b><small>${escapeHtml(other?.name || "Unknown")}</small></button>`;
+    return `<button class="class-relation-item" data-class-type-id="${attr(other?.id || "")}"><span>${outgoing ? "OUT" : "IN"}</span><small>${escapeHtml(other?.name || "Unknown")}</small><em>${escapeHtml(other?.kind || "type")}</em></button>`;
+  }
+
+  function classRelationOtherName(relation, selectedTypeId) {
+    return typeById.get(relation.sourceId === selectedTypeId ? relation.targetId : relation.sourceId)?.name || "";
   }
 
   function classTypeScore(type) { return type ? type.fanIn + type.fanOut + type.methodCount * .25 : 0; }
-  function classRelationPriority(relation, selectedTypeId) { return (relation.sourceId === selectedTypeId || relation.targetId === selectedTypeId ? 100 : 0) + ({ inherits: 8, implements: 7, creates: 4, calls: 3, uses: 1 }[relation.kind] || 0); }
   function truncate(value, length) { return value.length > length ? `${value.slice(0, length - 1)}…` : value; }
 
   function renderSourceUml() {
