@@ -10,9 +10,15 @@
   const treeSummary = document.querySelector("#tree-summary");
   const sidebarToggle = document.querySelector("#sidebar-toggle");
   const contextToggle = document.querySelector("#context-toggle");
+  const panelBackdrop = document.querySelector("#panel-backdrop");
   const shell = document.querySelector(".app-shell");
   const sidebar = document.querySelector("#project-explorer");
   const context = document.querySelector("#context-panel");
+  const compactPanelViewport = window.matchMedia("(max-width: 1180px)");
+  const desktopPanelPreferences = {
+    sidebarCollapsed: readPanelPreference("atlas.sidebarCollapsed"),
+    contextCollapsed: readPanelPreference("atlas.contextCollapsed"),
+  };
   let sourceUmlRenderSeq = 0;
 
   if (!data || data.schemaVersion !== "1.0") {
@@ -40,8 +46,8 @@
     sourceUmlViewModes: {},
     sourceUmlDirections: {},
     architectureCopyStatus: null,
-    sidebarCollapsed: readPanelPreference("atlas.sidebarCollapsed"),
-    contextCollapsed: readPanelPreference("atlas.contextCollapsed"),
+    sidebarCollapsed: compactPanelViewport.matches ? true : desktopPanelPreferences.sidebarCollapsed,
+    contextCollapsed: compactPanelViewport.matches ? true : desktopPanelPreferences.contextCollapsed,
     layerFilter: null,
     flowScenario: "movement",
     flowSelectedNode: "input",
@@ -72,16 +78,26 @@
         event.preventDefault();
         if (state.sidebarCollapsed) {
           state.sidebarCollapsed = false;
-          writePanelPreference("atlas.sidebarCollapsed", false);
+          if (compactPanelViewport.matches) {
+            state.contextCollapsed = true;
+          } else {
+            writePanelPreference("atlas.sidebarCollapsed", false);
+          }
           syncPanelVisibility();
         }
         searchInput.focus();
       }
-      if (event.key === "Escape" && document.activeElement === searchInput) {
-        searchInput.value = "";
-        state.search = "";
-        searchInput.blur();
-        renderTree();
+      if (event.key === "Escape") {
+        if (compactPanelViewport.matches && (!state.sidebarCollapsed || !state.contextCollapsed)) {
+          closeCompactPanels();
+          return;
+        }
+        if (document.activeElement === searchInput) {
+          searchInput.value = "";
+          state.search = "";
+          searchInput.blur();
+          renderTree();
+        }
       }
       const actionTarget = event.target.closest?.("[data-flow-node]");
       if (actionTarget && (event.key === "Enter" || event.key === " ")) {
@@ -115,14 +131,17 @@
       document.querySelector("#help-dialog").showModal());
     document.querySelector("#help-close").addEventListener("click", () =>
       document.querySelector("#help-dialog").close());
-    sidebarToggle.addEventListener("click", () => {
-      state.sidebarCollapsed = !state.sidebarCollapsed;
-      writePanelPreference("atlas.sidebarCollapsed", state.sidebarCollapsed);
-      syncPanelVisibility();
-    });
-    contextToggle.addEventListener("click", () => {
-      state.contextCollapsed = !state.contextCollapsed;
-      writePanelPreference("atlas.contextCollapsed", state.contextCollapsed);
+    sidebarToggle.addEventListener("click", () => togglePanel("sidebar"));
+    contextToggle.addEventListener("click", () => togglePanel("context"));
+    panelBackdrop.addEventListener("click", closeCompactPanels);
+    compactPanelViewport.addEventListener("change", event => {
+      if (event.matches) {
+        state.sidebarCollapsed = true;
+        state.contextCollapsed = true;
+      } else {
+        state.sidebarCollapsed = readPanelPreference("atlas.sidebarCollapsed");
+        state.contextCollapsed = readPanelPreference("atlas.contextCollapsed");
+      }
       syncPanelVisibility();
     });
 
@@ -282,6 +301,7 @@
 
   function setView(view) {
     if (!viewNames.has(view)) return;
+    closeCompactPanels();
     state.view = view;
     history.replaceState(null, "", `#${view}`);
     syncTabs();
@@ -295,6 +315,33 @@
     syncPanelElement(context, state.contextCollapsed);
     syncPanelToggle(sidebarToggle, state.sidebarCollapsed, "Project Explorer", "sidebar");
     syncPanelToggle(contextToggle, state.contextCollapsed, "설명", "context");
+    const panelOpen = compactPanelViewport.matches && (!state.sidebarCollapsed || !state.contextCollapsed);
+    shell.classList.toggle("has-panel-open", panelOpen);
+    panelBackdrop.setAttribute("aria-hidden", String(!panelOpen));
+    panelBackdrop.tabIndex = panelOpen ? 0 : -1;
+  }
+
+  function togglePanel(panel) {
+    const isSidebar = panel === "sidebar";
+    if (compactPanelViewport.matches) {
+      const nextCollapsed = isSidebar ? !state.sidebarCollapsed : !state.contextCollapsed;
+      state.sidebarCollapsed = isSidebar ? nextCollapsed : true;
+      state.contextCollapsed = isSidebar ? true : nextCollapsed;
+    } else if (isSidebar) {
+      state.sidebarCollapsed = !state.sidebarCollapsed;
+      writePanelPreference("atlas.sidebarCollapsed", state.sidebarCollapsed);
+    } else {
+      state.contextCollapsed = !state.contextCollapsed;
+      writePanelPreference("atlas.contextCollapsed", state.contextCollapsed);
+    }
+    syncPanelVisibility();
+  }
+
+  function closeCompactPanels() {
+    if (!compactPanelViewport.matches) return;
+    state.sidebarCollapsed = true;
+    state.contextCollapsed = true;
+    syncPanelVisibility();
   }
 
   function syncPanelElement(element, collapsed) {
@@ -336,6 +383,7 @@
 
   function selectType(typeId) {
     if (!typeById.has(typeId)) return;
+    closeCompactPanels();
     state.selectedTypeId = typeId;
     state.view = "explorer";
     history.replaceState(null, "", "#explorer");
