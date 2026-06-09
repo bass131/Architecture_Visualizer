@@ -1275,6 +1275,7 @@
       rows: [
         { area: "Combat", type: "EnemyEntity, AABB, EnemyState, CombatConstants", surface: "공개 combat state/value API", relation: "EnemyEntity *-- AABB, EnemyEntity o-- EnemyState" },
         { area: "Handlers", type: "IPacketHandler + concrete handlers", surface: "Handle(GameSession, ArraySegment<byte>)", relation: "handlers ..|> IPacketHandler, HandlerRegistry o-- IPacketHandler" },
+        { area: "Client Handlers", type: "IClientPacketHandler, UnityClientSession, PlayerAttackHandler, PlayerHpHandler", surface: "socket decode → main-thread visual/HUD update", relation: "client handlers ..|> IClientPacketHandler, UnityClientSession o-- IClientPacketHandler" },
         { area: "Loop", type: "GameWorld, TickScheduler, TickMetrics, Stats", surface: "world/tick lifecycle", relation: "GameWorld *-- GameMap, GameWorld *-- TickScheduler, TickMetrics *-- Stats" },
         { area: "Maps", type: "GameMap, PlayerEntity, Portal, systems", surface: "map actor, players, enemies, portal table", relation: "GameMap *-- PlayerEntity/EnemyEntity/systems, PlayerEntity *-- InputCommand" },
         { area: "Maps/States", type: "ActorState<T>, StateMachine<T>, player/enemy/boss states", surface: "state enter/tick/exit API", relation: "state classes --|> ActorState<T>, StateMachine *-- ActorState" },
@@ -1287,6 +1288,7 @@
 direction LR
 class Combat
 class Handlers
+class ClientHandlers
 class Loop
 class Maps
 class GameServerNetwork
@@ -1295,6 +1297,7 @@ class PacketGenerator
 
 GameServerNetwork --|> ServerNetwork : GameSession -> PacketSession
 Handlers ..> GameServerNetwork : Handle(GameSession)
+GameServerNetwork ..> ClientHandlers : S_PlayerAttack / S_PlayerHp
 Loop *-- Maps : GameWorld owns GameMap
 Maps *-- Combat : GameMap owns EnemyEntity
 Maps ..> GameServerNetwork : PlayerEntity Owner / Broadcast
@@ -1358,6 +1361,33 @@ HandshakeHandler ..|> IPacketHandler
 MoveIntentHandler ..|> IPacketHandler
 PingHandler ..|> IPacketHandler
 HandlerRegistry o-- IPacketHandler : registry`),
+        diagram("client-handlers", "Client Handlers", "Client Network", String.raw`classDiagram
+direction TB
+class IClientPacketHandler {
+  <<interface>>
+  +Handle(UnityClientSession session, ArraySegment~byte~ buffer)
+}
+class UnityClientSession {
+  -IReadOnlyDictionary~PacketID, IClientPacketHandler~ _handlers
+  +void OnRecvPacket(ArraySegment~byte~ buffer)
+}
+class PlayerAttackHandler {
+  +void Handle(UnityClientSession session, ArraySegment~byte~ buffer)
+}
+class PlayerHpHandler {
+  +void Handle(UnityClientSession session, ArraySegment~byte~ buffer)
+}
+class ProjectileSpawner {
+  +void Spawn(GameObject prefab, Transform spawnRoot, Transform target, int facing)
+}
+class HudController {
+  +void UpdateHP(int currentHp, int maxHp)
+}
+PlayerAttackHandler ..|> IClientPacketHandler
+PlayerHpHandler ..|> IClientPacketHandler
+UnityClientSession o-- IClientPacketHandler : dispatch table
+PlayerAttackHandler ..> ProjectileSpawner : ranged visual
+PlayerHpHandler ..> HudController : authoritative HP`),
         diagram("loop", "Loop", "Loop", String.raw`classDiagram
 direction TB
 class GameWorld {
@@ -1975,8 +2005,8 @@ Program ..> PacketFormat : string templates`),
           node("attack-handler", "AttackHandler", "decode only", "server", 674, "Server", "handler는 decode와 세션 게이트만 수행하고 상태를 직접 변경하지 않습니다.", ["IPacketHandler", "decode-only"], "authority"),
           node("attack-queue", "Map Job Queue", "tick thread handoff", "server", 876, "Server", "공격 작업을 해당 맵 actor의 tick thread로 전달합니다.", ["GameMap.EnqueueJob", "no await"], "authority"),
           node("attack-validate", "6단계 검증", "range · alive · rate", "server", 1078, "Server", "서버 위치를 기준으로 공격 가능성과 중복 요청을 검증합니다.", ["ProcessAttack", "trust boundary"], "authority"),
-          node("combat-result", "상태 확정", "HP · death · clear", "server", 1280, "Server", "HP mutation 뒤 hit, death, stage clear 이벤트를 순서대로 만듭니다.", ["S_HitResult", "S_EntityDeath", "S_StageClear"], "authority"),
-          node("combat-render", "결과 표현", "effect · UI · despawn", "client", 1482, "Client", "서버 결과를 받아 피해 효과, 사망, 스테이지 UI를 갱신합니다.", ["DamageFlash", "StageClear UI"], "result"),
+          node("combat-result", "상태 확정", "HP · attack · death", "server", 1280, "Server", "서버가 피해와 HP를 확정하고 원격 공격 연출 및 권위 HP 패킷을 브로드캐스트합니다.", ["S_HitResult", "S_PlayerAttack", "S_PlayerHp"], "authority"),
+          node("combat-render", "결과 표현", "projectile · HUD · death", "client", 1482, "Client", "Client handler가 원격 공격 연출과 로컬 HP HUD를 main thread에서 반영합니다.", ["PlayerAttackHandler", "PlayerHpHandler", "ProjectileSpawner"], "result"),
         ],
         edges: [
           { from: "attack-input", to: "attack-packet", label: "intent", tone: "intent" },

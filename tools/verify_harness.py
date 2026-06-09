@@ -79,6 +79,8 @@ def main() -> int:
     assert 'class="panel architecture-source-details"' in app and "<details" in app, "Architecture source must be collapsible and closed by default"
     assert 'data-view="source-uml"' in index and "function renderSourceUml" in app, "Source-backed UML view must be discoverable from _index.html"
     assert "PacketFormat.cs 내부 PacketManager" in app and "실제 타입 선언이 아니라 문자열 템플릿" in app, "Source UML must separate generated-code templates from actual C# types"
+    assert "PlayerAttackHandler" in app and "PlayerHpHandler" in app and 'diagram("client-handlers"' in app, "Source UML must cover protocol v10 client combat handlers"
+    assert '"S_PlayerAttack", "S_PlayerHp"' in app and '"ProjectileSpawner"' in app, "Combat flow must cover authoritative attack visuals and HP synchronization"
     assert 'assets/vendor/mermaid.min.js' in index and "function renderSourceMermaidDiagrams" in app, "Source UML diagrams must use the vendored Mermaid engine offline"
     assert ".source-uml-mermaid-svg" in styles and "window.mermaid.render" in app, "Source UML Mermaid output must render in-page"
     assert ".mermaid-code" in styles and "data-copy-source-uml" in app and "class=\"mermaid-details\"" in app, "Source UML Mermaid blocks must be readable, copyable, and collapsed by default"
