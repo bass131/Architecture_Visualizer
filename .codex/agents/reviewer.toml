@@ -1,6 +1,7 @@
 name = "reviewer"
 description = "Read-only architecture reviewer focused on correctness, regressions, evidence quality, and false-positive diagnostics."
 sandbox_mode = "read-only"
+model = "gpt-5.5"
 model_reasoning_effort = "high"
 developer_instructions = """
 Review this architecture atlas like an owner, without editing files.

@@ -30,6 +30,19 @@
     "interfaceMembers": 10,
     "fanOut": 12,
     "fanIn": 20,
-    "concreteDependencies": 8
+    "concreteDependencies": 8,
+    "longMethodLines": 40,
+    "delegationDensityContainer": 0.45,
+    "decisionDensityVeto": 0.12,
+    "decisionCountVeto": 8,
+    "decisionHeavyMethodTokens": 3,
+    "decisionHeavyMethodRatioVeto": 0.15,
+    "stateCentralityContainer": 0.6,
+    "stateContainerFields": 5,
+    "stateContainerLongMethods": 1,
+    "collaboratorFanOutContainer": 0.45,
+    "fieldSharingCohesionContainer": 0.5,
+    "containerEvidenceMinimum": 3,
+    "fieldClusterReview": 3
   }
 }

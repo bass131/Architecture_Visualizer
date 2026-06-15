@@ -36,6 +36,7 @@ FIELD_RE = re.compile(
 CALL_RE = re.compile(r"(?<!\bnew\s)(?:(?P<receiver>[A-Za-z_]\w*)\s*\.)?(?P<name>[A-Za-z_]\w*)\s*\(")
 LOCAL_RE = re.compile(r"\b(?P<type>[A-Za-z_]\w*(?:<[^;=()]+>)?)\s+(?P<name>_?[A-Za-z_]\w*)\s*(?:=|;|,)")
 NAMESPACE_RE = re.compile(r"\bnamespace\s+([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)\s*[;{]")
+DECISION_RE = re.compile(r"\b(?:if|else|for|foreach|while|switch|case|catch)\b|&&|\|\||(?<![?.])\?(?![?.])")
 
 CONTROL_WORDS = {
     "if", "for", "foreach", "while", "switch", "catch", "using", "lock", "return",
@@ -205,9 +206,9 @@ class Analyzer:
         self.index_models()
         self.extract_dependencies()
         self.extract_calls()
+        self.detect_patterns()
         self.calculate_metrics()
         self.detect_cycles()
-        self.detect_patterns()
         self.sort_models()
         projects = []
         for layer in sorted({item["layer"] for item in self.types}):
@@ -220,7 +221,7 @@ class Analyzer:
                 "diagnostics": sum(item["typeId"] in layer_ids for item in self.diagnostics),
             })
         return {
-            "schemaVersion": "1.0",
+            "schemaVersion": "1.1",
             "generatedAtUtc": self.source_snapshot_time(),
             "sourceRoot": str(self.source_root).replace("\\", "/"),
             "summary": {
@@ -231,6 +232,9 @@ class Analyzer:
                 "diagnostics": len(self.diagnostics),
                 "highSeverity": sum(item["severity"] == "high" for item in self.diagnostics),
                 "mediumSeverity": sum(item["severity"] == "medium" for item in self.diagnostics),
+                "issueCount": sum(item["category"] == "issue" for item in self.diagnostics),
+                "recommendationCount": sum(item["category"] == "recommendation" for item in self.diagnostics),
+                "informationalCount": sum(item["category"] == "informational" for item in self.diagnostics),
             },
             "projects": projects,
             "types": self.types,
@@ -245,6 +249,9 @@ class Analyzer:
                 "calls": "Heuristically resolved cross-type method invocation",
                 "high": "Strong review signal",
                 "medium": "Context-dependent review signal",
+                "issue": "Structurally supported issue",
+                "recommendation": "Context-dependent review recommendation",
+                "informational": "Impact or observation signal",
             },
         }
 
@@ -307,9 +314,8 @@ class Analyzer:
                 body_start = opening + 1 if match.group("open") == "{" else opening
                 body_end = end
                 body = file.masked[body_start:body_end]
-                source_body = file.source[body_start:body_end]
                 responsibilities = []
-                searchable = f"{file.relative} {source_body}".lower()
+                searchable = f"{file.relative} {body}".lower()
                 for responsibility, keywords in RESPONSIBILITY_KEYWORDS.items():
                     if sum(keyword in searchable for keyword in keywords) >= 3:
                         responsibilities.append(responsibility)
@@ -325,12 +331,13 @@ class Analyzer:
                     "patterns": [], "members": [], "methodIds": [], "concreteDependencyIds": [],
                     "methodCount": 0, "memberCount": 0, "fanIn": 0, "fanOut": 0,
                     "inheritanceDepth": 0,
+                    "structureMetrics": {},
                     "_file": file, "_bodyStart": body_start, "_bodyEnd": body_end,
                 }
-                self.extract_members_and_methods(type_model, body, source_body)
+                self.extract_members_and_methods(type_model, body)
                 self.types.append(type_model)
 
-    def extract_members_and_methods(self, type_model: dict, body: str, source_body: str) -> None:
+    def extract_members_and_methods(self, type_model: dict, body: str) -> None:
         depths = direct_depths(body)
         occupied: list[tuple[int, int]] = []
         for match in METHOD_RE.finditer(body):
@@ -468,7 +475,127 @@ class Analyzer:
             item["fanOut"] = len(outgoing[item["id"]])
             item["fanIn"] = len(incoming[item["id"]])
             item["inheritanceDepth"] = self.inheritance_depth(item, set())
+            item["structureMetrics"] = self.calculate_structure_metrics(item, outgoing[item["id"]])
             self.add_solid_diagnostics(item)
+
+    def calculate_structure_metrics(self, item: dict, outgoing_ids: set[str]) -> dict:
+        fields = {member["name"]: clean_type(member["type"]) for member in item["members"] if member["kind"] == "field"}
+        field_target_ids = set()
+        for field_type in fields.values():
+            target = self.resolve_type(field_type, item["namespace"])
+            if target:
+                field_target_ids.add(target["id"])
+
+        methods = [self.methods_by_id[method_id] for method_id in item["methodIds"]]
+        field_accesses: dict[str, set[str]] = {}
+        decision_count = 0
+        code_lines = 0
+        orchestration_methods = 0
+        heavy_decision_methods = 0
+        long_methods = 0
+        for method in methods:
+            body = method["_body"]
+            locals_and_params = {param["name"] for param in method["parameters"]}
+            locals_and_params.update(match.group("name") for match in LOCAL_RE.finditer(body))
+            accessed = set()
+            method_field_writes = 0
+            for field_name in fields:
+                explicit = re.search(rf"\bthis\s*\.\s*{re.escape(field_name)}\b", body)
+                direct = field_name not in locals_and_params and re.search(rf"(?<![A-Za-z0-9_]){re.escape(field_name)}\b", body)
+                if explicit or direct:
+                    accessed.add(field_name)
+                write_pattern = rf"(?:\bthis\s*\.\s*)?{re.escape(field_name)}\s*(?:[+\-*/%]?=(?!=)|\+\+|--)"
+                writes = len(re.findall(write_pattern, body))
+                method_field_writes += writes
+            field_accesses[method["id"]] = accessed
+            method_delegated_calls = 0
+            for call in CALL_RE.finditer(body):
+                if call.group("name") in CONTROL_WORDS:
+                    continue
+                receiver = call.group("receiver")
+                if receiver in fields and self.resolve_type(fields[receiver], item["namespace"]):
+                    method_delegated_calls += 1
+            method_decisions = len(DECISION_RE.findall(body))
+            decision_count += method_decisions
+            code_lines += sum(bool(line.strip()) for line in body.splitlines())
+            if method_decisions >= self.config.get("solidThresholds", {}).get("decisionHeavyMethodTokens", 3):
+                heavy_decision_methods += 1
+            if method_decisions <= 1 and method_delegated_calls + method_field_writes > 0:
+                orchestration_methods += 1
+            if method["sourceLines"] >= self.config.get("solidThresholds", {}).get("longMethodLines", 40):
+                long_methods += 1
+
+        active_method_count = max(1, sum(bool(method["_body"].strip()) for method in methods))
+        delegation_density = orchestration_methods / active_method_count
+        decision_density = min(1.0, decision_count / max(1, code_lines))
+        decision_heavy_method_ratio = heavy_decision_methods / active_method_count
+        state_centrality = len(fields) / max(1, len(fields) + long_methods * 3)
+        collaborator_ids = field_target_ids | set(item["concreteDependencyIds"])
+        collaborator_fan_out_ratio = len(outgoing_ids & collaborator_ids) / max(1, len(outgoing_ids))
+
+        active_methods = [method_id for method_id, names in field_accesses.items() if names]
+        components = 0
+        largest_component = 0
+        remaining = set(active_methods)
+        while remaining:
+            components += 1
+            stack = [remaining.pop()]
+            component_size = 0
+            while stack:
+                current = stack.pop()
+                component_size += 1
+                connected = {
+                    candidate for candidate in remaining
+                    if field_accesses[current] & field_accesses[candidate]
+                }
+                remaining.difference_update(connected)
+                stack.extend(connected)
+            largest_component = max(largest_component, component_size)
+        field_sharing_cohesion = largest_component / max(1, len(active_methods))
+
+        thresholds = self.config.get("solidThresholds", {})
+        recognized_patterns = {"Actor/Update Method", "Registry/Flyweight", "Component System", "Command/Handler"}
+        evidence_count = sum((
+            delegation_density >= thresholds.get("delegationDensityContainer", 0.45),
+            state_centrality >= thresholds.get("stateCentralityContainer", 0.6),
+            collaborator_fan_out_ratio >= thresholds.get("collaboratorFanOutContainer", 0.45),
+            field_sharing_cohesion >= thresholds.get("fieldSharingCohesionContainer", 0.5),
+            bool(recognized_patterns & set(item["patterns"])),
+        ))
+        veto = (
+            decision_count >= thresholds.get("decisionCountVeto", 8)
+            and decision_density >= thresholds.get("decisionDensityVeto", 0.12)
+            and decision_heavy_method_ratio >= thresholds.get("decisionHeavyMethodRatioVeto", 0.15)
+        )
+        container_like = (
+            not veto
+            and (
+                (
+                    delegation_density >= thresholds.get("delegationDensityContainer", 0.45)
+                    and evidence_count >= thresholds.get("containerEvidenceMinimum", 3)
+                )
+                or (
+                    delegation_density >= thresholds.get("delegationDensityContainer", 0.45)
+                    and state_centrality >= thresholds.get("stateCentralityContainer", 0.6)
+                    and len(fields) >= thresholds.get("stateContainerFields", 5)
+                    and long_methods <= thresholds.get("stateContainerLongMethods", 1)
+                )
+            )
+        )
+        return {
+            "delegationDensity": round(delegation_density, 3),
+            "decisionDensity": round(decision_density, 3),
+            "decisionCount": decision_count,
+            "decisionHeavyMethodRatio": round(decision_heavy_method_ratio, 3),
+            "stateCentrality": round(state_centrality, 3),
+            "fanOutKind": "collaborator-heavy" if collaborator_fan_out_ratio >= thresholds.get("collaboratorFanOutContainer", 0.45) else "domain-spanning",
+            "collaboratorFanOutRatio": round(collaborator_fan_out_ratio, 3),
+            "fieldSharingComponents": components,
+            "fieldSharingCohesion": round(field_sharing_cohesion, 3),
+            "containerEvidenceCount": evidence_count,
+            "decisionVeto": veto,
+            "containerLike": container_like,
+        }
 
     def inheritance_depth(self, item: dict, visited: set[str]) -> int:
         if item["id"] in visited:
@@ -480,10 +607,10 @@ class Analyzer:
                 return 1 + self.inheritance_depth(target, visited)
         return 0
 
-    def diagnostic(self, item: dict, principle: str, severity: str, title: str, evidence: str) -> None:
+    def diagnostic(self, item: dict, principle: str, severity: str, category: str, title: str, evidence: str) -> None:
         self.diagnostics.append({
             "id": f"diag:{item['id']}:{principle}:{title}", "typeId": item["id"],
-            "typeName": item["name"], "principle": principle, "severity": severity,
+            "typeName": item["name"], "principle": principle, "severity": severity, "category": category,
             "title": title, "evidence": evidence, "file": item["file"], "line": item["startLine"],
         })
 
@@ -492,31 +619,84 @@ class Analyzer:
             return
         t = self.config.get("solidThresholds", {})
         review_lines, god_lines = t.get("classReviewLines", 300), t.get("godClassLines", 600)
+        structure = item["structureMetrics"]
+        container_like = structure["containerLike"]
+        container_evidence = (
+            f"Container-like structure: delegation {structure['delegationDensity']:.3f}, "
+            f"decision {structure['decisionDensity']:.3f}, collaborator fan-out {structure['collaboratorFanOutRatio']:.3f}."
+        )
         if item["sourceLines"] >= god_lines:
-            self.diagnostic(item, "SRP", "high", "Very large type", f"{item['sourceLines']} lines. 600+ is a strong God class signal.")
+            severity = "medium" if container_like else "high"
+            evidence = f"{item['sourceLines']} lines. {god_lines}+ is a strong review signal, not an automatic split order."
+            self.diagnostic(item, "SRP", severity, "recommendation", "Very large type", evidence + (" " + container_evidence if container_like else ""))
         elif item["sourceLines"] >= review_lines:
-            self.diagnostic(item, "SRP", "medium", "Large type needs review", f"{item['sourceLines']} lines. Size is a signal, not an automatic split order.")
+            self.diagnostic(item, "SRP", "medium", "recommendation", "Large type needs review", f"{item['sourceLines']} lines. Size is a signal, not an automatic split order.")
         if len(item["responsibilities"]) >= 4:
-            self.diagnostic(item, "SRP", "high", "Multiple responsibility areas", "Detected " + ", ".join(item["responsibilities"]) + ".")
+            severity = "medium" if container_like else "high"
+            evidence = "Detected " + ", ".join(item["responsibilities"]) + "."
+            self.diagnostic(item, "SRP", severity, "recommendation", "Multiple responsibility areas", evidence + (" " + container_evidence if container_like else ""))
         elif len(item["responsibilities"]) == 3 and item["sourceLines"] >= 150:
-            self.diagnostic(item, "SRP", "medium", "Responsibility boundary is broad", "Detected " + " and ".join(item["responsibilities"]) + ".")
+            self.diagnostic(item, "SRP", "medium", "recommendation", "Responsibility boundary is broad", "Detected " + " and ".join(item["responsibilities"]) + ".")
+        if (
+            item["sourceLines"] >= review_lines
+            and structure["fieldSharingComponents"] >= t.get("fieldClusterReview", 3)
+        ):
+            self.diagnostic(
+                item,
+                "SRP",
+                "medium",
+                "recommendation",
+                "Separated field-sharing clusters",
+                f"Approximate field-sharing found {structure['fieldSharingComponents']} method clusters; use as supporting evidence only.",
+            )
+        contract_evidence = self.contract_bypass_evidence(item)
+        if contract_evidence:
+            self.diagnostic(item, "LSP", "high", "issue", "Contract implementation is bypassed", contract_evidence)
         interface_limit = t.get("interfaceMembers", 10)
         if item["kind"] == "interface" and item["memberCount"] > interface_limit:
             severity = "high" if item["memberCount"] > interface_limit * 2 else "medium"
-            self.diagnostic(item, "ISP", severity, "Wide interface", f"{item['memberCount']} members may force unused dependencies.")
+            self.diagnostic(item, "ISP", severity, "recommendation", "Wide interface", f"{item['memberCount']} members may force unused dependencies.")
         if item["fanOut"] > t.get("fanOut", 12):
-            self.diagnostic(item, "DIP/Coupling", "medium", "High outgoing coupling", f"Depends on {item['fanOut']} project types.")
+            self.diagnostic(item, "DIP/Coupling", "medium", "recommendation", "High outgoing coupling", f"Depends on {item['fanOut']} project types.")
         if item["fanIn"] > t.get("fanIn", 20):
-            self.diagnostic(item, "Stability", "medium", "High incoming coupling", f"Used by {item['fanIn']} project types; changes have broad impact.")
+            self.diagnostic(item, "Stability", "medium", "informational", "High incoming coupling", f"Used by {item['fanIn']} project types; changes have broad impact.")
         if len(item["concreteDependencyIds"]) > t.get("concreteDependencies", 8):
-            self.diagnostic(item, "DIP", "medium", "Many concrete constructions", f"Creates {len(item['concreteDependencyIds'])} project types directly.")
+            self.diagnostic(item, "DIP", "medium", "recommendation", "Many concrete constructions", f"Creates {len(item['concreteDependencyIds'])} project types directly.")
         allowed_session = item["name"].endswith("Session") and item["inheritanceDepth"] <= 2
         if item["inheritanceDepth"] > 1 and not allowed_session:
             severity = "high" if item["inheritanceDepth"] > 2 else "medium"
-            self.diagnostic(item, "Composition", severity, "Deep inheritance", f"Inheritance depth is {item['inheritanceDepth']}; project convention prefers <= 1.")
+            self.diagnostic(item, "Composition", severity, "issue", "Deep inheritance", f"Inheritance depth is {item['inheritanceDepth']}; project convention prefers <= 1.")
         mutable_static = [member for member in item["members"] if member["kind"] == "field" and "static" in member["modifiers"] and "readonly" not in member["modifiers"] and "const" not in member["modifiers"]]
         if mutable_static:
-            self.diagnostic(item, "State", "medium", "Mutable static state", f"Contains {len(mutable_static)} mutable static field(s).")
+            self.diagnostic(item, "State", "medium", "recommendation", "Mutable static state", f"Contains {len(mutable_static)} mutable static field(s).")
+
+    def contract_bypass_evidence(self, item: dict) -> str | None:
+        interface_ids = set()
+        for base in item["baseTypeNames"]:
+            target = self.resolve_type(base, item["namespace"])
+            if target and target["kind"] == "interface":
+                interface_ids.add(target["id"])
+        if not interface_ids:
+            return None
+        interface_method_names = {
+            method["name"]
+            for method in self.methods
+            if method["typeId"] in interface_ids and clean_type(method["returnType"]) == "bool"
+        }
+        item_methods = [self.methods_by_id[method_id] for method_id in item["methodIds"]]
+        for method in item_methods:
+            if method["name"] not in interface_method_names or clean_type(method["returnType"]) != "bool":
+                continue
+            body = re.sub(r"\s+", " ", method["_body"]).strip()
+            if body != "return false;":
+                continue
+            bypasses = sorted({
+                candidate["name"] for candidate in item_methods
+                if candidate["name"] != method["name"] and candidate["name"].startswith(method["name"])
+            })
+            if bypasses:
+                return f"Interface method {method['signature']} always returns false while {', '.join(bypasses)} provides a separate execution path."
+        return None
 
     def detect_cycles(self) -> None:
         graph: dict[str, set[str]] = defaultdict(set)
@@ -555,7 +735,7 @@ class Analyzer:
                 for type_id in component:
                     item = self.types_by_id.get(type_id)
                     if item and not item["isGenerated"]:
-                        self.diagnostic(item, "Dependency", "medium", "Cyclic dependency", "Cycle group: " + " -> ".join(names))
+                        self.diagnostic(item, "Dependency", "medium", "issue", "Cyclic dependency", "Cycle group: " + " -> ".join(names))
 
         for item in self.types:
             if item["id"] not in indices:

@@ -14,7 +14,7 @@ description: Synchronize the DawnHolder Architecture Atlas with the read-only Cl
 ## Visualizer Synchronization
 
 6. Confirm `_index.html` remains the only entry point, loads `data/architecture-data.js` before `assets/app.js`, and has no server, CDN, or network requirement.
-7. Confirm the refreshed dataset uses schema `1.0`, has nonzero type and method counts, and passes relation, call-graph, layer, source-scope, and test-exclusion checks.
+7. Confirm the refreshed dataset uses schema `1.1`, has nonzero type and method counts, and passes relation, call-graph, layer, source-scope, test-exclusion, and diagnostic-category checks.
 8. Check the data-driven surfaces against the refreshed model:
    - project tree and search: types, folders, generated-code visibility;
    - overview: project and diagnostic summaries;

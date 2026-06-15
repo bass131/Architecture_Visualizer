@@ -15,6 +15,46 @@ from analyze import (
 
 
 class AnalyzerUtilityTests(unittest.TestCase):
+    def analyze_sources(self, sources: dict[str, str], thresholds: dict | None = None) -> dict:
+        with tempfile.TemporaryDirectory() as temporary:
+            source = pathlib.Path(temporary)
+            for relative, content in sources.items():
+                path = source / relative
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(content, encoding="utf-8")
+            return Analyzer(source, {
+                "sourceRoots": ["Game"],
+                "includeTests": False,
+                "testMarkers": ["Tests.cs"],
+                "generatedMarkers": ["/Generated/"],
+                "solidThresholds": thresholds or {},
+            }).run()
+
+    def analyze_fixtures(self) -> dict:
+        fixture_root = pathlib.Path(__file__).parent / "fixtures"
+        sources = {f"Game/{path.name}": path.read_text(encoding="utf-8") for path in fixture_root.glob("*.cs")}
+        return self.analyze_sources(sources, {
+            "classReviewLines": 12,
+            "godClassLines": 20,
+            "interfaceMembers": 10,
+            "fanOut": 50,
+            "fanIn": 0,
+            "concreteDependencies": 50,
+            "longMethodLines": 12,
+            "delegationDensityContainer": 0.4,
+            "decisionDensityVeto": 0.12,
+            "decisionCountVeto": 3,
+            "decisionHeavyMethodTokens": 3,
+            "decisionHeavyMethodRatioVeto": 0.15,
+            "stateCentralityContainer": 0.55,
+            "stateContainerFields": 5,
+            "stateContainerLongMethods": 1,
+            "collaboratorFanOutContainer": 0.4,
+            "fieldSharingCohesionContainer": 0.45,
+            "containerEvidenceMinimum": 3,
+            "fieldClusterReview": 2,
+        })
+
     def test_mask_non_code_preserves_structure_for_brace_matching(self) -> None:
         source = 'class Sample { string text = "}"; // }\n void Run() { } /* } */ }'
         masked = mask_non_code(source)
@@ -109,6 +149,79 @@ class AnalyzerUtilityTests(unittest.TestCase):
                 sorted(paths[:5]),
                 sorted(item.relative for item in analyzer.files),
             )
+
+    def test_responsibilities_ignore_comments_and_string_literals(self) -> None:
+        data = self.analyze_sources({
+            "Game/Sample.cs": '''
+class Sample
+{
+    // attack combat damage cooldown stageclear
+    private string Description => "attack combat damage cooldown stageclear";
+    public void Run() { }
+}
+''',
+        })
+
+        sample = next(item for item in data["types"] if item["name"] == "Sample")
+        self.assertEqual([], sample["responsibilities"])
+
+    def test_every_diagnostic_has_a_category_and_summary_counts_match(self) -> None:
+        data = self.analyze_sources({
+            "Game/Inheritance.cs": '''
+class Base { }
+class Middle : Base { }
+class Deep : Middle { }
+class MutableState { public static int Count; }
+''',
+        })
+
+        self.assertTrue(data["diagnostics"])
+        self.assertEqual(
+            {"issue", "recommendation"},
+            {item["category"] for item in data["diagnostics"]},
+        )
+        self.assertEqual(
+            len(data["diagnostics"]),
+            data["summary"]["issueCount"] + data["summary"]["recommendationCount"] + data["summary"]["informationalCount"],
+        )
+
+    def test_structural_ground_truth_fixtures(self) -> None:
+        data = self.analyze_fixtures()
+        diagnostics_by_type = {}
+        for diagnostic in data["diagnostics"]:
+            diagnostics_by_type.setdefault(diagnostic["typeName"], []).append(diagnostic)
+        types = {item["name"]: item for item in data["types"]}
+
+        for name in ("TickCoordinator", "StateAggregate", "ProtocolAdapter"):
+            srp = [item for item in diagnostics_by_type.get(name, []) if item["principle"] == "SRP"]
+            self.assertTrue(srp, name)
+            self.assertTrue(types[name]["structureMetrics"]["containerLike"], name)
+            self.assertFalse(any(item["severity"] == "high" for item in srp), name)
+            self.assertTrue(all(item["category"] == "recommendation" for item in srp), name)
+
+        translator_srp = [item for item in diagnostics_by_type.get("IntentTranslator", []) if item["principle"] == "SRP"]
+        self.assertEqual([], translator_srp)
+
+        prediction_srp = [item for item in diagnostics_by_type.get("PredictionWorkspace", []) if item["principle"] == "SRP"]
+        self.assertTrue(any(item["severity"] == "high" and item["category"] == "recommendation" for item in prediction_srp))
+
+        contract = diagnostics_by_type.get("ContractBypassAction", [])
+        self.assertTrue(any(item["principle"] == "LSP" and item["category"] == "issue" for item in contract))
+
+        hybrid_srp = [item for item in diagnostics_by_type.get("HybridCoordinator", []) if item["principle"] == "SRP"]
+        self.assertTrue(types["HybridCoordinator"]["structureMetrics"]["decisionVeto"])
+        self.assertFalse(types["HybridCoordinator"]["structureMetrics"]["containerLike"])
+        self.assertTrue(any(item["severity"] == "high" for item in hybrid_srp))
+
+    def test_fan_in_is_informational_and_field_clusters_are_not_issues(self) -> None:
+        data = self.analyze_fixtures()
+        fan_in = [item for item in data["diagnostics"] if item["title"] == "High incoming coupling"]
+        cluster_signals = [item for item in data["diagnostics"] if item["title"] == "Separated field-sharing clusters"]
+
+        self.assertTrue(fan_in)
+        self.assertTrue(all(item["category"] == "informational" for item in fan_in))
+        self.assertTrue(cluster_signals)
+        self.assertTrue(all(item["category"] == "recommendation" for item in cluster_signals))
 
 
 if __name__ == "__main__":

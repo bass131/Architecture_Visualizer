@@ -13,4 +13,11 @@ description: Review changes in the DawnHolder Architecture Atlas repository agai
 6. Run `verify.ps1` for UI, documentation, or harness review. Run `verify.ps1 -Refresh` when analyzer, policy, or data semantics changed.
 7. Distinguish verified defects from residual risk. If no issues are found, state that clearly and name any untested surface.
 
+## Measurement Ownership
+
+- Review Atlas-owned structural output for reproducibility and evidence quality: type/method models, relations, call estimates, fan-in/out, structure metrics, category, and severity.
+- Do not introduce ad-hoc brace, casing, formatting, or single-statement counts into Atlas findings. Source `.editorconfig` plus Roslyn/StyleCop owns those measurements.
+- Label any unverified style observation `source Roslyn validation heuristic` and keep it separate from Atlas diagnostics.
+- Responsibility-header and history/Phase-comment observations may be informational documentation debt only; they are not style compliance scores.
+
 Do not edit files while performing a review unless the user explicitly asks to address the findings.

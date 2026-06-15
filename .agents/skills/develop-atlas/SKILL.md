@@ -13,5 +13,6 @@ description: Implement scoped changes to the DawnHolder Architecture Atlas. Use 
 6. Implement with existing project patterns. Keep `_index.html` as the user entry point and preserve offline `file://` operation.
 7. Run the verification command required by `AGENTS.md`. Use `verify.ps1 -Refresh` for analyzer, policy, or data-contract changes.
 8. Review the diff for scope growth, source writes, unsupported diagnostic claims, and missing tests before reporting completion.
+9. Keep normal implementation on the project default model. Count only executable or acceptance-criterion failures; after one failure revise the approach, and after two failures follow the model-escalation policy in `docs/CODEX_WORKFLOW.md`.
 
 Do not add unattended branch creation, automatic commits, or pushes. Git publication remains an explicit user action.

@@ -31,11 +31,18 @@ def main() -> int:
         text = (ROOT / relative).read_text(encoding="utf-8")
         assert "[TODO" not in text, f"Unresolved skill or document placeholder: {relative}"
 
+    review_architecture = (ROOT / ".agents/skills/review-architecture/SKILL.md").read_text(encoding="utf-8")
+    review_atlas = (ROOT / ".agents/skills/review-atlas/SKILL.md").read_text(encoding="utf-8")
+    for relative, text in (("review-architecture", review_architecture), ("review-atlas", review_atlas)):
+        assert "source Roslyn validation heuristic" in text, f"Style measurement downgrade label is missing: {relative}"
+        assert "Roslyn/StyleCop" in text, f"Source style authority is missing: {relative}"
+
     index = (ROOT / "_index.html").read_text(encoding="utf-8")
     assert 'src="data/architecture-data.js' in index, "Generated dataset is not loaded by _index.html"
     assert 'src="assets/app.js' in index, "Application script is not loaded by _index.html"
-    assert "mobile-layout-20260609" in index, "Mobile layout styles must use the current cache-busting version"
-    assert 'assets/app.js?v=source-uml-fit-20260609' in index, "Application script must invalidate caches after the UML default-view change"
+    assert 'assets/styles.css?v=measurement-trust-20260613' in index, "Measurement-trust styles must invalidate caches"
+    assert 'data/architecture-data.js?v=measurement-trust-20260613' in index, "Schema 1.1 data must invalidate caches"
+    assert 'assets/app.js?v=measurement-trust-20260613' in index, "Measurement-trust UI must invalidate caches"
     assert 'data-view="flow"' in index, "End-to-end architecture flow is not discoverable from _index.html"
     assert 'data-view="architecture"' in index, "High-level architecture overview is not discoverable from _index.html"
     assert 'data-view="classes"' in index, "Area class diagrams are not discoverable from _index.html"
@@ -57,9 +64,13 @@ def main() -> int:
     assert "function renderClasses()" in app and "function createClassAreas()" in app, "Area class diagrams are missing"
     assert "function renderCalls()" not in app and "function renderCallTree" not in app and "data-method-id" not in app, "Call explorer implementation must remain removed"
     assert "data-copy-diagnostics" in app and "function formatDiagnosticsText" in app, "Diagnostic copy action is missing"
+    assert "diagnosticCategory" in app and "data-category" in app, "Diagnostic category filters are missing"
+    assert ".badge.informational" in styles, "Diagnostic category legend styles are missing"
     assert "function syncPanelVisibility()" in app and "atlas.sidebarCollapsed" in app, "Persistent side panel controls are missing"
-    for scenario in ("movement", "combat", "transition", "generation"):
+    for scenario in ("movement", "combat", "skill", "party", "transition", "generation"):
         assert f'{scenario}:' in app, f"Architecture scenario is missing: {scenario}"
+    for action_type in ("ActionGate", "ActionRegistry", "ActionContext", "IGameAction", "MeleeAction", "DashAction", "TeleportAction", "ThunderboltAction"):
+        assert action_type in app, f"Current server action boundary is missing from curated diagrams: {action_type}"
     assert 'layout: "generation"' in app and '3 · ARTIFACTS' in app, "Packet generation flow must show parallel generated artifacts"
     assert "function generationFlowPath" in app and ".diagram-phase" in styles, "Packet generation flow must use dedicated branch and merge routing"
     assert "function fitSvgText" in app and "function measureSvgText" in app and "nodeWidth = isGenerationLayout ? 190 : 148" in app, "Flow nodes and connector labels must use measured spacing"
@@ -91,6 +102,9 @@ def main() -> int:
     assert 'data-view="source-uml"' in index and "function renderSourceUml" in app, "Source-backed UML view must be discoverable from _index.html"
     assert "PacketFormat.cs 내부 PacketManager" in app and "실제 타입 선언이 아니라 문자열 템플릿" in app, "Source UML must separate generated-code templates from actual C# types"
     assert "PlayerAttackHandler" in app and "PlayerHpHandler" in app and 'diagram("client-handlers"' in app, "Source UML must cover protocol v10 client combat handlers"
+    assert 'diagram("party-quest"' in app and "PartyRegistry" in app and "PartyNotifier" in app, "Source UML must cover the cross-map party and quest actor boundary"
+    assert "PartyInviteHandler" in app and "PartyUpdateHandler" in app and "QuestUpdateHandler" in app, "Curated diagrams must cover protocol v16 party and quest handlers"
+    assert "EnemyAttackState" in app and "S_PortalLocked" in app, "Curated diagrams must cover enemy attack state and boss portal rejection"
     assert '"S_PlayerAttack", "S_PlayerHp"' in app and '"ProjectileSpawner"' in app, "Combat flow must cover authoritative attack visuals and HP synchronization"
     assert 'assets/vendor/mermaid.min.js' in index and "function renderSourceMermaidDiagrams" in app, "Source UML diagrams must use the vendored Mermaid engine offline"
     assert ".source-uml-mermaid-svg" in styles and "window.mermaid.render" in app, "Source UML Mermaid output must render in-page"

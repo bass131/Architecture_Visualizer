@@ -37,15 +37,15 @@ Do not explain away omissions or false positives. Add a reproducible sample or r
 
 ## 5. Codex Roles
 
-- Main agent / Router (`medium`): classify work as UI, analyzer, data contract, or harness
-- Built-in `explorer` / Context Manager: perform focused read-heavy investigation when delegation is justified
-- Main agent / Worker (`medium`): implement one coherent responsibility
-- Project `reviewer` (`high`): read-only review of reproducibility, correctness, regressions, and over-warning
-- Project `verifier` (`medium`): read-only execution and evaluation of deterministic gates
+- Main agent / Router and Worker (`gpt-5.4-mini`, `medium`): classify and implement one coherent responsibility
+- Project `explorer` (`gpt-5.4-mini`, `low`): perform focused read-heavy investigation when delegation is justified
+- Project `verifier` (`gpt-5.4-mini`, `low`): read-only execution and evaluation of deterministic gates
+- Project `reviewer` (`gpt-5.5`, `high`): read-only review of reproducibility, correctness, regressions, and over-warning
+- Project `escalation-worker` (`gpt-5.5`, `medium`): bounded implementation retry after two evidence-backed failures or explicit user request
 
 Codex does not spawn subagents automatically. Use them only when the user explicitly requests parallel agents or a substantial change merits an independent delegated review. Keep write-heavy work with the main agent. Source-project agent definitions are not part of this harness.
 
-Simple reads, status checks, refreshes, and deterministic syntax or schema checks stay in the main session. They do not justify a subagent or an effort increase. See `docs/CODEX_WORKFLOW.md` for escalation and context-economy rules.
+Simple reads, status checks, refreshes, and deterministic syntax or schema checks stay in the main session. They do not justify a subagent or a model increase. See `docs/CODEX_WORKFLOW.md` for escalation and context-economy rules.
 
 ## 6. Codex Workflows
 
