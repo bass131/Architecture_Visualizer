@@ -26,12 +26,25 @@ Codex plans replace persistent `phases/` files for normal work. Create durable p
 
 | Work type | Effort | Execution |
 | --- | --- | --- |
-| Simple lookup, status, refresh, syntax/schema check | Current `medium` session | Run the deterministic command directly; do not delegate |
-| Normal implementation, debugging, and routing | `medium` | Main session and `$develop-atlas` workflow |
-| Verification with failure interpretation | `medium` | Main session or project `verifier` when independent assessment is justified |
-| Architecture, regression, diagnostic, or evidence review | `high` | Project `reviewer` or `$review-atlas` workflow |
+| Simple lookup, status, refresh, syntax/schema check | `gpt-5.4-mini`, current `medium` session | Run the deterministic command directly; do not delegate |
+| Focused read-heavy exploration | `gpt-5.4-mini`, `low` | Project `explorer` only when delegation is justified |
+| Normal implementation, debugging, and routing | `gpt-5.4-mini`, `medium` | Main session and `$develop-atlas` workflow |
+| Verification with failure interpretation | `gpt-5.4-mini`, `low` | Main session or project `verifier` when independent assessment is justified |
+| Architecture, regression, diagnostic, or evidence review | `gpt-5.5`, `high` | Project `reviewer` or `$review-atlas` workflow |
+| Implementation after two evidence-backed failures | `gpt-5.5`, `medium` | Project `escalation-worker` when subagent use is explicitly requested or authorized; otherwise switch the current session with `/model` |
 
 Effort reflects judgment complexity, not elapsed time or file count. A long deterministic refresh remains direct execution; a short but ambiguous architecture decision may justify `high` review.
+
+## Model Escalation
+
+The project default is `gpt-5.4-mini` with `medium` reasoning. Escalation follows a bounded sequence inspired by the source project's cost controls without inheriting its agent runtime:
+
+1. Make the first implementation attempt in the main session and run the targeted executable check.
+2. If a build, test, deterministic gate, or explicit acceptance criterion fails, record the concrete cause, revise the approach, and retry once.
+3. If the same bounded task fails a second time, escalate to `gpt-5.5` for structural re-diagnosis. Use `escalation-worker` only when subagent use was explicitly requested or authorized; otherwise use `/model` in the current session.
+4. If the GPT-5.5 attempt still fails, stop repeating the approach and report the blocker with the accumulated evidence.
+
+Permission denials, unavailable executables, network failures, and other external tooling conditions do not count as model failures. Review work uses `reviewer` directly because ambiguity and evidence assessment, rather than prior failure, justify the stronger model.
 
 ## Context Economy
 

@@ -1,7 +1,8 @@
 name = "verifier"
 description = "Read-only verifier that runs and evaluates the architecture harness deterministic gates."
 sandbox_mode = "read-only"
-model_reasoning_effort = "medium"
+model = "gpt-5.4-mini"
+model_reasoning_effort = "low"
 developer_instructions = """
 Act only as a verifier. Do not edit files.
 Keep the assessment focused on the requested gate and interpret failures without broad architecture exploration.

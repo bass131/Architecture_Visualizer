@@ -14,4 +14,11 @@ description: Review DawnHolder architecture diagnostics against the real C# sour
 7. Classify each result as confirmed issue, review recommendation, or static-analysis false positive.
 8. Lead with findings ordered by severity and include source file and line references.
 
+## Measurement Ownership
+
+- Atlas owns reproducible structural evidence: types, methods, relations, call estimates, fan-in/out, delegation and decision density, approximate field-sharing, and container signals.
+- Do not present brace, casing, formatting, or single-statement style counts as Atlas measurements. The source repository's `.editorconfig` and Roslyn/StyleCop results are authoritative for those rules.
+- If a style concern must be mentioned without source analyzer output, label it `source Roslyn validation heuristic`; do not attach an authoritative count.
+- Treat missing responsibility headers and history/Phase comments only as informational documentation-debt observations, not style compliance metrics.
+
 Do not refactor the source repository or execute its agent workflows. If the user later asks for a source fix, treat that as a separate project task requiring explicit source-write permission.

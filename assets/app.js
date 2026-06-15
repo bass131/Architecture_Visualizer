@@ -21,7 +21,7 @@
   };
   let sourceUmlRenderSeq = 0;
 
-  if (!data || data.schemaVersion !== "1.0") {
+  if (!data || data.schemaVersion !== "1.1") {
     main.innerHTML = `<div class="empty-state"><h2>분석 데이터를 불러오지 못했습니다.</h2><p><code>refresh.ps1</code>을 실행해 데이터를 생성하세요.</p></div>`;
     return;
   }
@@ -39,6 +39,7 @@
     selectedTypeId: pickInitialType(),
     search: "",
     diagnosticSeverity: "all",
+    diagnosticCategory: "all",
     diagnosticPrinciple: "all",
     diagnosticTypeId: null,
     diagnosticCopyStatus: null,
@@ -183,10 +184,18 @@
       render();
       return;
     }
+    const categoryTarget = event.target.closest("[data-category]");
+    if (categoryTarget) {
+      state.diagnosticCategory = categoryTarget.dataset.category;
+      state.diagnosticCopyStatus = null;
+      render();
+      return;
+    }
     const diagnosticTypeTarget = event.target.closest("[data-diagnostic-type]");
     if (diagnosticTypeTarget) {
       state.diagnosticTypeId = diagnosticTypeTarget.dataset.diagnosticType || null;
       state.diagnosticSeverity = "all";
+      state.diagnosticCategory = "all";
       state.diagnosticPrinciple = "all";
       state.diagnosticCopyStatus = null;
       setView("diagnostics");
@@ -459,6 +468,7 @@
       <section class="stats-grid">
         ${stat("파일", summary.files)}${stat("타입", summary.types)}${stat("메서드", summary.methods)}
         ${stat("관계", summary.relations)}${stat("검토 신호", summary.diagnostics)}${stat("높은 신호", summary.highSeverity, "alert")}
+        ${stat("Issue", summary.issueCount, "alert")}${stat("Recommendation", summary.recommendationCount)}${stat("Informational", summary.informationalCount)}
       </section>
       <section class="panel">
         <div class="panel-header"><h2>아키텍처 흐름</h2><button class="link-button" data-view-link="flow">전체 흐름 열기</button></div>
@@ -692,6 +702,7 @@
   function flowEdgeLabel(label) {
     const labels = {
       intent: "행동 의도",
+      "skill-intent": "스킬 의도",
       encode: "패킷 인코딩",
       bytes: "직렬화",
       "TCP frame": "TCP 전송",
@@ -702,6 +713,7 @@
       tick: "tick 처리",
       mutate: "상태 변경",
       broadcast: "결과 전파",
+      cast: "스킬 확정",
       C_EnterPortal: "포털 요청",
       approved: "검증 통과",
       "map handoff": "맵 인계",
@@ -736,7 +748,7 @@
       item("server-net", "server", "Server Network", "listener · packet session", 678, 616, 174),
       item("handlers", "server", "Handlers", "decode · validate · gate", 910, 616, 174, "authority"),
       item("world", "server", "GameWorld / Maps", "actor ownership", 678, 522, 174, "authority"),
-      item("systems", "server", "Systems", "movement · combat", 910, 522, 174, "authority"),
+      item("systems", "server", "Systems / Actions", "gate · strategy · simulation", 910, 522, 174, "authority"),
     ];
     const channel = (number, title, detail, tone, badgeX, badgeY, paths, labels) => ({ number, title, detail, tone, badgeX, badgeY, paths, labels });
     const channels = [
@@ -825,7 +837,7 @@
       "  end",
       "  subgraph Server",
       "    SM[ServerPacketManager]",
-      "    Authority[Validate + Tick + Migration]",
+      "    Authority[ActionGate + Tick + Migration]",
       "  end",
       "",
       "  PDL -->|1 생성| PG --> GP",
@@ -1405,11 +1417,13 @@
     return {
       rows: [
         { area: "Combat", type: "EnemyEntity, AABB, EnemyState, CombatConstants", surface: "공개 combat state/value API", relation: "EnemyEntity *-- AABB, EnemyEntity o-- EnemyState" },
-        { area: "Handlers", type: "IPacketHandler + concrete handlers", surface: "Handle(GameSession, ArraySegment<byte>)", relation: "handlers ..|> IPacketHandler, HandlerRegistry o-- IPacketHandler" },
-        { area: "Client Handlers", type: "IClientPacketHandler, UnityClientSession, PlayerAttackHandler, PlayerHpHandler", surface: "socket decode → main-thread visual/HUD update", relation: "client handlers ..|> IClientPacketHandler, UnityClientSession o-- IClientPacketHandler" },
+        { area: "Handlers", type: "IPacketHandler + combat, party, debug handlers", surface: "Handle(GameSession, ArraySegment<byte>)", relation: "handlers ..|> IPacketHandler, HandlerRegistry o-- IPacketHandler" },
+        { area: "Client Handlers", type: "IClientPacketHandler, UnityClientSession, combat/party/quest handlers", surface: "socket decode → main-thread state mirror, visual, HUD update", relation: "client handlers ..|> IClientPacketHandler, UnityClientSession o-- IClientPacketHandler" },
         { area: "Loop", type: "GameWorld, TickScheduler, TickMetrics, Stats", surface: "world/tick lifecycle", relation: "GameWorld *-- GameMap, GameWorld *-- TickScheduler, TickMetrics *-- Stats" },
-        { area: "Maps", type: "GameMap, PlayerEntity, Portal, systems", surface: "map actor, players, enemies, portal table", relation: "GameMap *-- PlayerEntity/EnemyEntity/systems, PlayerEntity *-- InputCommand" },
+        { area: "Maps", type: "GameMap, PlayerEntity, Portal, systems, ActionContext", surface: "map actor, players, enemies, portal table, action execution context", relation: "GameMap *-- PlayerEntity/EnemyEntity/systems, IGameAction ..> ActionContext" },
         { area: "Maps/States", type: "ActorState<T>, StateMachine<T>, player/enemy/boss states", surface: "state enter/tick/exit API", relation: "state classes --|> ActorState<T>, StateMachine *-- ActorState" },
+        { area: "Party / Quest", type: "PartyRegistry, PartyState, PartyNotifier, QuestConstants", surface: "cross-map party actor, shared kill progress, server-authoritative notifications", relation: "GameWorld *-- PartyRegistry, PartyRegistry *-- PartyState, PartyNotifier ..> GameWorld" },
+        { area: "Client Party / Quest", type: "PartyState, QuestState, party/quest handlers and HUD", surface: "server packet → main-thread mirror → popup/HUD", relation: "handlers ..> PartyState/QuestState, HUD ..> mirrored state" },
         { area: "GameServer Network", type: "GameSession, IntentRateLimiter, MapMigration", surface: "session lifecycle and map migration hooks", relation: "GameSession --|> PacketSession, GameSession *-- IntentRateLimiter" },
         { area: "02_Server/Network", type: "Session, PacketSession, Listener, Connector, buffers, queues", surface: "socket/session/buffer primitives", relation: "PacketSession --|> Session, JobQueue ..|> IJobQueue" },
         { area: "PacketGenerator", type: "Program, PacketFormat", surface: "PDL parse methods and format strings", relation: "Program ..> PacketFormat" },
@@ -1425,11 +1439,15 @@ class Maps
 class GameServerNetwork
 class ServerNetwork
 class PacketGenerator
+class PartyQuest
 
 GameServerNetwork --|> ServerNetwork : GameSession -> PacketSession
 Handlers ..> GameServerNetwork : Handle(GameSession)
 GameServerNetwork ..> ClientHandlers : S_PlayerAttack / S_PlayerHp
 Loop *-- Maps : GameWorld owns GameMap
+Loop *-- PartyQuest : GameWorld owns PartyRegistry
+GameServerNetwork ..> PartyQuest : submit party commands
+PartyQuest ..> ClientHandlers : S_Party* / S_QuestUpdate
 Maps *-- Combat : GameMap owns EnemyEntity
 Maps ..> GameServerNetwork : PlayerEntity Owner / Broadcast
 GameServerNetwork ..> Maps : GetMap / migration
@@ -1482,6 +1500,10 @@ class EnterPortalHandler { +void Handle(GameSession session, ArraySegment~byte~ 
 class HandshakeHandler { +void Handle(GameSession session, ArraySegment~byte~ buffer) }
 class MoveIntentHandler { +void Handle(GameSession session, ArraySegment~byte~ buffer) }
 class PingHandler { +void Handle(GameSession session, ArraySegment~byte~ buffer) }
+class PartyInviteHandler { +void Handle(GameSession session, ArraySegment~byte~ buffer) }
+class PartyRespondHandler { +void Handle(GameSession session, ArraySegment~byte~ buffer) }
+class PartyLeaveHandler { +void Handle(GameSession session, ArraySegment~byte~ buffer) }
+class CheatCommandHandler { +void Handle(GameSession session, ArraySegment~byte~ buffer) }
 class HandlerRegistry {
   +bool TryGet(PacketID id, out IPacketHandler handler)
 }
@@ -1491,6 +1513,10 @@ EnterPortalHandler ..|> IPacketHandler
 HandshakeHandler ..|> IPacketHandler
 MoveIntentHandler ..|> IPacketHandler
 PingHandler ..|> IPacketHandler
+PartyInviteHandler ..|> IPacketHandler
+PartyRespondHandler ..|> IPacketHandler
+PartyLeaveHandler ..|> IPacketHandler
+CheatCommandHandler ..|> IPacketHandler
 HandlerRegistry o-- IPacketHandler : registry`),
         diagram("client-handlers", "Client Handlers", "Client Network", String.raw`classDiagram
 direction TB
@@ -1508,17 +1534,40 @@ class PlayerAttackHandler {
 class PlayerHpHandler {
   +void Handle(UnityClientSession session, ArraySegment~byte~ buffer)
 }
+class PartyInviteRecvHandler {
+  +void Handle(UnityClientSession session, ArraySegment~byte~ buffer)
+}
+class PartyUpdateHandler {
+  +void Handle(UnityClientSession session, ArraySegment~byte~ buffer)
+}
+class QuestUpdateHandler {
+  +void Handle(UnityClientSession session, ArraySegment~byte~ buffer)
+}
+class PortalLockedHandler {
+  +void Handle(UnityClientSession session, ArraySegment~byte~ buffer)
+}
 class ProjectileSpawner {
   +void Spawn(GameObject prefab, Transform spawnRoot, Transform target, int facing)
 }
 class HudController {
   +void UpdateHP(int currentHp, int maxHp)
 }
+class ClientPartyState
+class ClientQuestState
+class ToastUI
 PlayerAttackHandler ..|> IClientPacketHandler
 PlayerHpHandler ..|> IClientPacketHandler
+PartyInviteRecvHandler ..|> IClientPacketHandler
+PartyUpdateHandler ..|> IClientPacketHandler
+QuestUpdateHandler ..|> IClientPacketHandler
+PortalLockedHandler ..|> IClientPacketHandler
 UnityClientSession o-- IClientPacketHandler : dispatch table
 PlayerAttackHandler ..> ProjectileSpawner : ranged visual
-PlayerHpHandler ..> HudController : authoritative HP`),
+PlayerHpHandler ..> HudController : authoritative HP
+PartyInviteRecvHandler ..> ClientPartyState : pending invite
+PartyUpdateHandler ..> ClientPartyState : server mirror
+QuestUpdateHandler ..> ClientQuestState : progress mirror
+PortalLockedHandler ..> ToastUI : rejection message`),
         diagram("loop", "Loop", "Loop", String.raw`classDiagram
 direction TB
 class GameWorld {
@@ -1598,6 +1647,27 @@ class MapId {
   <<enum>>
 }
 class CombatSystem
+class SkillSystem
+class ActionGate
+class ActionRegistry
+class IGameAction {
+  <<interface>>
+  +ActionKind Kind
+  +int CooldownTicks
+  +CharacterClass? RequiredClass
+  +bool Execute(GameMap map, PlayerEntity caster, in ActionContext ctx)
+}
+class ActionContext {
+  <<readonly struct>>
+  +long ClientTick
+  +int TargetEntityId
+  +sbyte Facing
+  +byte VerticalDir
+}
+class MeleeAction
+class DashAction
+class TeleportAction
+class ThunderboltAction
 class EnemyAISystem
 class BossBehaviorSystem
 class RespawnSystem
@@ -1605,9 +1675,20 @@ GameMap *-- PlayerEntity : _players
 GameMap *-- EnemyEntity : _enemies
 GameMap o-- Portal : Portals
 GameMap *-- CombatSystem
+GameMap *-- SkillSystem
 GameMap *-- EnemyAISystem
 GameMap *-- BossBehaviorSystem
 GameMap *-- RespawnSystem
+CombatSystem *-- ActionGate
+SkillSystem *-- ActionGate
+ActionGate ..> ActionRegistry : lookup
+ActionGate ..> ActionContext : build authority context
+ActionRegistry o-- IGameAction : registered actions
+IGameAction ..> ActionContext : Execute context
+MeleeAction ..|> IGameAction
+DashAction ..|> IGameAction
+TeleportAction ..|> IGameAction
+ThunderboltAction ..|> IGameAction
 PlayerEntity *-- InputCommand : input queue
 PortalTable ..> Portal : returns`),
         diagram("player-states", "Maps / Player States", "Maps", String.raw`classDiagram
@@ -1662,6 +1743,7 @@ class BossStates
 class PatrolState
 class ChaseState
 class EnemyHitState
+class EnemyAttackState
 class BossIdleState
 class BossMoveState
 class BossTelegraphState
@@ -1669,6 +1751,7 @@ class BossAttackState
 PatrolState --|> ActorState~EnemyEntity~
 ChaseState --|> ActorState~EnemyEntity~
 EnemyHitState --|> ActorState~EnemyEntity~
+EnemyAttackState --|> ActorState~EnemyEntity~
 BossIdleState --|> ActorState~EnemyEntity~
 BossMoveState --|> ActorState~EnemyEntity~
 BossTelegraphState --|> ActorState~EnemyEntity~
@@ -1676,10 +1759,54 @@ BossAttackState --|> ActorState~EnemyEntity~
 EnemyStates *-- PatrolState
 EnemyStates *-- ChaseState
 EnemyStates *-- EnemyHitState
+EnemyStates *-- EnemyAttackState
 BossStates *-- BossIdleState
 BossStates *-- BossMoveState
 BossStates *-- BossTelegraphState
 BossStates *-- BossAttackState`),
+        diagram("party-quest", "Party / Quest", "Party + Quest", String.raw`classDiagram
+direction LR
+class GameWorld
+class GameSession {
+  +void SubmitPartyInvite(int targetEntityId)
+  +void SubmitPartyRespond(int inviterEntityId, byte accept)
+  +void SubmitPartyLeave()
+}
+class PartyRegistry {
+  +void EnqueueJob(Action job)
+  +void Tick(long currentTick)
+  +PartyState CreateParty(int initiatorEntityId, int memberEntityId)
+  +void OnKill(int killerEntityId, GameWorld world)
+}
+class ServerPartyState
+class PartyNotifier {
+  +void SendInviteRecv(...)
+  +void SendPartyUpdate(...)
+  +void SendQuestUpdate(...)
+}
+class UnityClientSession
+class PartyInviteRecvHandler
+class PartyUpdateHandler
+class QuestUpdateHandler
+class ClientPartyState
+class ClientQuestState
+class PartyInvitePopup
+class PartyMemberHud
+class QuestProgressHud
+GameWorld *-- PartyRegistry : global actor
+PartyRegistry *-- ServerPartyState : authoritative state
+GameSession ..> PartyRegistry : EnqueueJob
+PartyRegistry ..> PartyNotifier : result notification
+PartyNotifier ..> GameWorld : SendToEntity cross-map
+UnityClientSession o-- PartyInviteRecvHandler
+UnityClientSession o-- PartyUpdateHandler
+UnityClientSession o-- QuestUpdateHandler
+PartyInviteRecvHandler ..> ClientPartyState : pending invite
+PartyUpdateHandler ..> ClientPartyState : mirrored party
+QuestUpdateHandler ..> ClientQuestState : mirrored progress
+ClientPartyState ..> PartyInvitePopup : event
+ClientPartyState ..> PartyMemberHud : event
+ClientQuestState ..> QuestProgressHud : event`),
         diagram("gameserver-network", "GameServer Network", "Network", String.raw`classDiagram
 direction TB
 class PacketSession {
@@ -1780,7 +1907,7 @@ Program ..> PacketFormat : string templates`),
         { item: "PacketFormat.cs 내부 PacketManager/IPacket/PacketID", reason: "실제 타입 선언이 아니라 문자열 템플릿 안의 생성 예정 코드라 제외했습니다." },
         { item: "Handler -> GameMap/Packet 세부 관계", reason: "Handle 내부 decode/call 기반의 transitive 의존이라 UML 관계선에서 생략했습니다." },
         { item: "TickScheduler -> TickMetrics", reason: "필드 보유가 아니라 RunLoop local 생성이므로 합성으로 그리지 않았습니다." },
-        { item: "Shared 타입들", reason: "PlayerStats, EnemyStats, PacketID 등은 대상 경로 밖이라 타입 박스에서 제외했습니다." },
+        { item: "기타 Shared 타입들", reason: "PlayerStats, EnemyStats, PacketID 등은 가독성을 위해 대표 계약만 남기고 타입 박스에서 제외했습니다." },
         { item: "PortalTable -> Portal", reason: "정적 반환 관계라 약한 dependency로만 표시했습니다." },
       ],
     };
@@ -1874,6 +2001,7 @@ Program ..> PacketFormat : string templates`),
     const filtered = data.diagnostics.filter(item =>
       (!contextType || item.typeId === contextType.id) &&
       (state.diagnosticSeverity === "all" || item.severity === state.diagnosticSeverity) &&
+      (state.diagnosticCategory === "all" || item.category === state.diagnosticCategory) &&
       (state.diagnosticPrinciple === "all" || item.principle === state.diagnosticPrinciple));
     const copyLabel = state.diagnosticCopyStatus === "copied" ? "복사됨" : state.diagnosticCopyStatus === "failed" ? "복사 실패" : "텍스트로 복사";
     main.innerHTML = `
@@ -1884,7 +2012,11 @@ Program ..> PacketFormat : string templates`),
         <span class="copy-status ${state.diagnosticCopyStatus === "failed" ? "is-error" : ""}">${escapeHtml(diagnosticCopyMessage(filtered.length))}</span>
       </div>
       <div class="diagnostic-toolbar">
-        ${chip("전체 심각도", "severity", "all", state.diagnosticSeverity)}${chip("높음", "severity", "high", state.diagnosticSeverity)}${chip("중간", "severity", "medium", state.diagnosticSeverity)}
+        ${chip("전체 심각도", "severity", "all", state.diagnosticSeverity)}${chip("높음", "severity", "high", state.diagnosticSeverity)}${chip("중간", "severity", "medium", state.diagnosticSeverity)}${chip("낮음", "severity", "low", state.diagnosticSeverity)}
+      </div>
+      <div class="diagnostic-toolbar diagnostic-category-legend" aria-label="진단 분류 범례">
+        ${chip("전체 분류", "category", "all", state.diagnosticCategory)}${chip("Issue", "category", "issue", state.diagnosticCategory)}${chip("Recommendation", "category", "recommendation", state.diagnosticCategory)}${chip("Informational", "category", "informational", state.diagnosticCategory)}
+        <span>Issue는 구조적 문제, Recommendation은 문맥 검토, Informational은 영향 범위 관찰입니다.</span>
       </div>
       <div class="diagnostic-toolbar">
         ${chip("전체 원칙", "principle", "all", state.diagnosticPrinciple)}${principles.map(value => chip(value, "principle", value, state.diagnosticPrinciple)).join("")}
@@ -1896,6 +2028,7 @@ Program ..> PacketFormat : string templates`),
     return data.diagnostics.filter(item =>
       (!state.diagnosticTypeId || item.typeId === state.diagnosticTypeId) &&
       (state.diagnosticSeverity === "all" || item.severity === state.diagnosticSeverity) &&
+      (state.diagnosticCategory === "all" || item.category === state.diagnosticCategory) &&
       (state.diagnosticPrinciple === "all" || item.principle === state.diagnosticPrinciple));
   }
 
@@ -1917,15 +2050,16 @@ Program ..> PacketFormat : string templates`),
   function formatDiagnosticsText(items) {
     if (!items.length) return "";
     const severity = state.diagnosticSeverity === "all" ? "전체 심각도" : state.diagnosticSeverity;
+    const category = state.diagnosticCategory === "all" ? "전체 분류" : state.diagnosticCategory;
     const principle = state.diagnosticPrinciple === "all" ? "전체 원칙" : state.diagnosticPrinciple;
     const lines = [
       `DawnHolder Architecture Atlas SOLID diagnostics`,
-      `Filters: ${severity} / ${principle}`,
+      `Filters: ${severity} / ${category} / ${principle}`,
       `Count: ${items.length}`,
       "",
     ];
     items.forEach((item, index) => {
-      lines.push(`${index + 1}. [${item.severity}] ${item.principle} - ${item.typeName}: ${item.title}`);
+      lines.push(`${index + 1}. [${item.category} / ${item.severity}] ${item.principle} - ${item.typeName}: ${item.title}`);
       lines.push(`   Evidence: ${item.evidence}`);
       lines.push(`   Location: ${item.file}:${item.line}`);
       lines.push("");
@@ -2097,7 +2231,7 @@ Program ..> PacketFormat : string templates`),
           node("attack-send", "패킷 전송", "TCP framing", "transport", 472, "ClientNet / Server", "분리된 양쪽 socket 계층이 동일 패킷 바이트를 전달합니다.", ["ClientNet", "Server"]),
           node("attack-handler", "AttackHandler", "decode only", "server", 674, "Server", "handler는 decode와 세션 게이트만 수행하고 상태를 직접 변경하지 않습니다.", ["IPacketHandler", "decode-only"], "authority"),
           node("attack-queue", "Map Job Queue", "tick thread handoff", "server", 876, "Server", "공격 작업을 해당 맵 actor의 tick thread로 전달합니다.", ["GameMap.EnqueueJob", "no await"], "authority"),
-          node("attack-validate", "6단계 검증", "range · alive · rate", "server", 1078, "Server", "서버 위치를 기준으로 공격 가능성과 중복 요청을 검증합니다.", ["ProcessAttack", "trust boundary"], "authority"),
+          node("attack-validate", "ActionGate + Melee", "state · cooldown · rewind", "server", 1078, "Server", "공통 ActionGate가 상태·쿨다운·rewind를 검증한 뒤 MeleeAction에 권위 실행을 위임합니다.", ["ActionGate", "MeleeAction", "trust boundary"], "authority"),
           node("combat-result", "상태 확정", "HP · attack · death", "server", 1280, "Server", "서버가 피해와 HP를 확정하고 원격 공격 연출 및 권위 HP 패킷을 브로드캐스트합니다.", ["S_HitResult", "S_PlayerAttack", "S_PlayerHp"], "authority"),
           node("combat-render", "결과 표현", "projectile · HUD · death", "client", 1482, "Client", "Client handler가 원격 공격 연출과 로컬 HP HUD를 main thread에서 반영합니다.", ["PlayerAttackHandler", "PlayerHpHandler", "ProjectileSpawner"], "result"),
         ],
@@ -2111,14 +2245,60 @@ Program ..> PacketFormat : string templates`),
           { from: "combat-result", to: "combat-render", label: "broadcast", tone: "result" },
         ],
       },
+      skill: {
+        ...base, id: "skill", title: "스킬 사용", kicker: "SERVER-AUTHORITATIVE SKILL CAST",
+        description: "클라이언트는 스킬 의도만 보내고, 서버는 ActionGate의 공통 검증 뒤 Registry가 선택한 IGameAction으로 결과를 확정합니다.",
+        nodes: [
+          node("skill-input", "스킬 입력", "hotkey · skillId", "client", 68, "Client", "클라이언트는 스킬 ID만 고르고 대상·피해·이동 결과는 서버에 맡깁니다.", ["SkillId", "input intent"], "intent"),
+          node("skill-packet", "C_SkillUse", "skillId + client tick", "contract", 270, "Shared", "공유 패킷 계약에 스킬 ID와 rewind 기준 tick을 기록합니다.", ["C_SkillUse", "ProtocolVersion"]),
+          node("skill-send", "패킷 전송", "TCP framing", "transport", 472, "ClientNet", "ClientNet이 스킬 요청을 프레이밍해 서버로 전송합니다.", ["NetworkService", "ClientSession"]),
+          node("skill-handler", "SkillUseHandler", "decode + trust gate", "server", 674, "Server", "핸들러는 패킷 범위와 캐스터 클래스를 검증하고 map actor에 작업을 제출합니다.", ["SkillUseHandler", "SkillCatalog"], "authority"),
+          node("skill-queue", "Map Job Queue", "tick thread handoff", "server", 876, "Server", "스킬 요청을 해당 맵 actor의 tick thread로 전달합니다.", ["GameMap.EnqueueJob", "no await"], "authority"),
+          node("skill-resolve", "ActionGate + Registry", "state · cooldown · class · rewind", "server", 1078, "Server", "SkillSystem이 ActionGate 단일 입구를 호출하고 ActionRegistry가 Dash, Teleport, Thunderbolt 전략을 선택합니다.", ["ActionGate", "ActionRegistry", "IGameAction"], "authority"),
+          node("skill-result", "S_SkillCast", "cast result", "contract", 1280, "Shared", "스킬 판정 결과와 후속 이펙트를 wire contract로 브로드캐스트합니다.", ["S_SkillCast", "S_ProjectileLaunch"], "result"),
+          node("skill-render", "결과 표현", "vfx · HUD · state", "client", 1482, "Client", "Client handler가 스킬 연출과 상태 반영을 main thread에서 처리합니다.", ["SkillCastHandler", "ProjectileLaunchHandler", "LocalPlayerInput"], "result"),
+        ],
+        edges: [
+          { from: "skill-input", to: "skill-packet", label: "skill-intent", tone: "intent" },
+          { from: "skill-packet", to: "skill-send", label: "encode" },
+          { from: "skill-send", to: "skill-handler", label: "dispatch" },
+          { from: "skill-handler", to: "skill-queue", label: "submit", tone: "authority" },
+          { from: "skill-queue", to: "skill-resolve", label: "tick", tone: "authority" },
+          { from: "skill-resolve", to: "skill-result", label: "cast", tone: "authority" },
+          { from: "skill-result", to: "skill-render", label: "broadcast", tone: "result" },
+        ],
+      },
+      party: {
+        ...base, id: "party", title: "파티 결성", kicker: "CROSS-MAP PARTY ACTOR",
+        description: "초대와 응답은 세션 신뢰 경계를 통과한 뒤 GameWorld 소유 PartyRegistry actor에서 직렬화되고, 결과는 cross-map 1:1 통지로 클라이언트 미러에 반영됩니다.",
+        nodes: [
+          node("party-input", "파티 초대", "nearby target intent", "client", 68, "Client", "클라이언트는 근접 대상 entity ID만 선택하고 파티 상태를 직접 만들지 않습니다.", ["PartyInviteSender", "targetEntityId"], "intent"),
+          node("party-packet", "C_PartyInvite", "target only", "contract", 270, "Shared", "행위자 ID 없이 대상만 보내며 초대자는 서버 세션의 entity ID로 강제됩니다.", ["C_PartyInvite", "trust boundary"]),
+          node("party-handler", "Invite Handler", "auth + decode", "server", 472, "Server", "클래스 선택 여부를 확인한 뒤 GameSession의 캡슐화된 제출 API를 호출합니다.", ["PartyInviteHandler", "GameSession"], "authority"),
+          node("party-registry", "PartyRegistry", "global actor queue", "server", 674, "Server", "GameWorld 소유 actor가 존재, 자기초대, 기존 파티 여부를 검증하고 pending invite를 기록합니다.", ["EnqueueJob", "PendingInvite"], "authority"),
+          node("party-invite", "S_PartyInviteRecv", "cross-map notify", "contract", 876, "Shared", "PartyNotifier가 대상 맵으로 마샬링해 서버 권위 초대자 정보를 전달합니다.", ["PartyNotifier", "SendToEntity"], "result"),
+          node("party-respond", "초대 응답", "C_PartyRespond", "client", 1078, "Client", "팝업 응답은 서버 pending invite와 대조될 주장만 보내며 응답자 ID는 세션에서 강제됩니다.", ["PartyInvitePopup", "C_PartyRespond"], "intent"),
+          node("party-create", "파티 확정", "match + create", "server", 1280, "Server", "서버가 pending invite를 소비하고 2인 PartyState를 만든 뒤 양쪽에 상태를 통지합니다.", ["CreateParty", "S_PartyUpdate"], "authority"),
+          node("party-mirror", "미러 + HUD", "state events", "client", 1482, "Client", "클라이언트 handler가 main thread에서 PartyState를 갱신하고 팝업과 멤버 HUD를 반영합니다.", ["PartyUpdateHandler", "PartyState", "PartyMemberHud"], "result"),
+        ],
+        edges: [
+          { from: "party-input", to: "party-packet", label: "invite", tone: "intent" },
+          { from: "party-packet", to: "party-handler", label: "dispatch" },
+          { from: "party-handler", to: "party-registry", label: "enqueue", tone: "authority" },
+          { from: "party-registry", to: "party-invite", label: "notify", tone: "authority" },
+          { from: "party-invite", to: "party-respond", label: "popup", tone: "result" },
+          { from: "party-respond", to: "party-create", label: "accept", tone: "intent" },
+          { from: "party-create", to: "party-mirror", label: "S_PartyUpdate", tone: "result" },
+        ],
+      },
       transition: {
         ...base, id: "transition", title: "맵 전환", kicker: "MAP MIGRATION",
-        description: "포털 의도를 검증한 뒤 기존 맵에서 제거하고 목적 맵 actor에 같은 entity ID로 등록합니다.",
+        description: "포털 의도를 검증해 퀘스트 게이트 미달이면 S_PortalLocked로 거부하고, 통과하면 기존 맵에서 제거한 뒤 목적 맵 actor에 같은 entity ID로 등록합니다.",
         nodes: [
           node("portal-input", "포털 진입", "portalId intent", "client", 68, "Client", "목적지 좌표가 아니라 portalId만 서버에 제안합니다.", ["C_EnterPortal", "no position"], "intent"),
           node("portal-send", "전환 요청", "session 유지", "transport", 270, "ClientNet", "기존 TCP 세션을 유지한 채 전환 패킷을 전송합니다.", ["NetworkService", "persistent session"]),
           node("portal-handler", "Portal Handler", "gate + submit", "server", 472, "Server", "handshake와 class 상태를 확인하고 현재 맵에 작업을 넣습니다.", ["EnterPortalHandler", "SubmitEnterPortal"], "authority"),
-          node("portal-validate", "포털 검증", "ID · 거리 · 상태", "server", 674, "Server", "현재 위치와 portal table을 기준으로 전환 가능성을 검증합니다.", ["PortalTable", "distance <= 2"], "authority"),
+          node("portal-validate", "포털 검증", "ID · 거리 · quest gate", "server", 674, "Server", "현재 위치와 portal table을 검증하고 보스 포털 진행도 미달이면 S_PortalLocked로 거부합니다.", ["PortalTable", "S_PortalLocked", "QuestConstants"], "authority"),
           node("remove-map", "Map A 제거", "leave broadcast", "server", 876, "Server", "기존 맵 actor에서 플레이어를 제거하고 leave를 브로드캐스트합니다.", ["RemovePlayer", "S_PlayerLeave"], "authority"),
           node("add-map", "Map B 등록", "entity ID 유지", "server", 1078, "Server", "목적 맵 job queue에서 동일 entity ID로 플레이어를 추가합니다.", ["AddPlayerWithId", "ADR-026"], "authority"),
           node("transition-packet", "S_MapTransition", "map + spawn", "contract", 1280, "Shared", "목적 mapId와 spawn 좌표를 본인에게만 통지합니다.", ["destMapId", "spawnX/Y"], "result"),
@@ -2199,7 +2379,7 @@ Program ..> PacketFormat : string templates`),
   }
 
   function diagnosticCard(item) {
-    return `<article class="diagnostic-card ${attr(item.severity)}"><div><span class="principle">${escapeHtml(item.principle)}</span><div class="badge ${attr(item.severity)}">${escapeHtml(item.severity)}</div></div><div><h3>${escapeHtml(item.typeName)} · ${escapeHtml(item.title)}</h3><p>${escapeHtml(item.evidence)}</p></div><button class="link-button" data-type-id="${attr(item.typeId)}">타입 보기</button></article>`;
+    return `<article class="diagnostic-card ${attr(item.severity)} ${attr(item.category)}"><div><span class="principle">${escapeHtml(item.principle)}</span><div class="badge ${attr(item.category)}">${escapeHtml(item.category)}</div><div class="badge ${attr(item.severity)}">${escapeHtml(item.severity)}</div></div><div><h3>${escapeHtml(item.typeName)} · ${escapeHtml(item.title)}</h3><p>${escapeHtml(item.evidence)}</p></div><button class="link-button" data-type-id="${attr(item.typeId)}">타입 보기</button></article>`;
   }
 
   function chip(label, dimension, value, current) {

@@ -374,6 +374,9 @@ h3 { font-size: 14px; }
 .badge.accent { color: var(--accent); border-color: #536027; }
 .badge.high { color: #ff9696; border-color: #663636; background: #251518; }
 .badge.medium { color: #f6bd78; border-color: #654b2d; background: #251e16; }
+.badge.issue { color: #ff9696; border-color: #663636; background: #251518; }
+.badge.recommendation { color: #f6bd78; border-color: #654b2d; background: #251e16; }
+.badge.informational { color: #8ec9ff; border-color: #315777; background: #14202b; }
 .metrics-row { display: grid; grid-template-columns: repeat(6, 1fr); gap: 8px; margin: 14px 0; }
 .metric { background: var(--panel-2); border-radius: 7px; padding: 10px; }
 .metric strong, .metric span { display: block; }
@@ -429,12 +432,15 @@ h3 { font-size: 14px; }
 .copy-status { color: var(--muted); font-size: 11px; }
 .copy-status.is-error { color: #ff9696; }
 .diagnostic-toolbar { display: flex; flex-wrap: wrap; gap: 7px; margin-bottom: 14px; }
+.diagnostic-category-legend { align-items: center; }
+.diagnostic-category-legend span { color: var(--muted); font-size: 10px; line-height: 1.4; }
 .chip { border: 1px solid var(--line); background: var(--panel); color: var(--muted); border-radius: 99px; padding: 6px 10px; cursor: pointer; font-size: 11px; }
 .chip.is-active { color: var(--text); border-color: var(--accent); }
 .diagnostic-list { display: grid; gap: 9px; }
 .diagnostic-card { display: grid; grid-template-columns: 86px 1fr auto; gap: 14px; align-items: center; padding: 14px; }
 .diagnostic-card.high { border-left: 3px solid var(--red); }
 .diagnostic-card.medium { border-left: 3px solid var(--orange); }
+.diagnostic-card.informational { border-left-color: var(--blue); }
 .diagnostic-card h3 { margin-bottom: 4px; }
 .diagnostic-card p { color: var(--muted); font-size: 11px; line-height: 1.45; margin: 0; }
 .principle { font-weight: 800; color: var(--accent-2); font-size: 11px; }

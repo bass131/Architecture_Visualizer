@@ -72,12 +72,14 @@ Spawn subagents only when the user asks for parallel agents or the task is subst
 
 ## Reasoning Effort
 
-- Main session and implementation: `medium`. Use this default for routing, coding, debugging, and ordinary design decisions.
-- Deterministic verification: `medium` when delegated to `verifier`, because it must interpret failures and assess whether the selected gate matches the change.
-- Architecture and regression review: `high` through `reviewer`, because source-backed evidence, false positives, and missing-test risk require deeper judgment.
+- Main session and implementation: `gpt-5.4-mini` with `medium` effort. Use this project default for routing, coding, debugging, and ordinary design decisions.
+- Focused exploration: `gpt-5.4-mini` with `low` effort through `explorer` when delegation is justified.
+- Deterministic verification: `gpt-5.4-mini` with `low` effort through `verifier`; executable scripts establish the facts and the agent only interprets the selected gate.
+- Architecture and regression review: `gpt-5.5` with `high` effort through `reviewer`, because source-backed evidence, false positives, and missing-test risk require deeper judgment.
+- Implementation escalation: `gpt-5.5` with `medium` effort through `escalation-worker` only after two evidence-backed failures of the same bounded task, or when the user explicitly requests a demanding GPT-5.5 worker.
 - Simple reads, status checks, refresh commands, and exact-format validation: run directly in the main session without spawning another agent or increasing effort.
 
-Do not raise effort merely because a task is long. Escalate to `reviewer` only when the work requires independent judgment about correctness, architecture, evidence, or regression risk.
+Do not raise the model or effort merely because a task is long. A failure counts toward escalation only when a build, test, deterministic gate, or explicit acceptance criterion fails. Tooling or permission failures do not count. After the first failure, diagnose and retry once with a materially revised approach. After the second failure, use `escalation-worker` only when subagent use is explicitly requested or authorized for the task; otherwise report the evidence and recommend switching the current session with `/model`. Escalate to `reviewer` only when the work requires independent judgment about correctness, architecture, evidence, or regression risk.
 
 ## Context Economy
 
